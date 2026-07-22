@@ -6,10 +6,11 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
-  token: string
+  accessToken: string   // BE field is 'accessToken' not 'token'
+  tokenType: string
+  expiresIn: number
   username: string
   fullName: string
-  email: string
   role: string
 }
 
