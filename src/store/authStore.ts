@@ -2,13 +2,20 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { LoginResponse } from '@/types/auth'
 
+// Only the user-identity fields we need to store (not token metadata)
+interface AuthUser {
+  username: string
+  fullName: string
+  role: string
+}
+
 interface AuthState {
   token: string | null
-  user: Omit<LoginResponse, 'token'> | null
+  user: AuthUser | null
   isAuthenticated: boolean
   login: (data: LoginResponse) => void
   logout: () => void
-  updateUser: (data: Partial<Omit<LoginResponse, 'token'>>) => void
+  updateUser: (data: Partial<AuthUser>) => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -19,8 +26,11 @@ export const useAuthStore = create<AuthState>()(
       isAuthenticated: false,
 
       login: (data) => {
-        const { accessToken, tokenType: _, expiresIn: __, ...user } = data
-        set({ token: accessToken, user, isAuthenticated: true })
+        set({
+          token: data.accessToken,
+          user: { username: data.username, fullName: data.fullName, role: data.role },
+          isAuthenticated: true,
+        })
       },
 
       logout: () => {
