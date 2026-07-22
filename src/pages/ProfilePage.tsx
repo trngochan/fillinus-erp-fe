@@ -3,15 +3,16 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Link } from 'react-router-dom'
-import { User, Mail, Phone, MapPin, Briefcase, Building2, Loader2, Save, KeyRound, LogOut } from 'lucide-react'
+import { User, Mail, Phone, Briefcase, Building2, Loader2, Save, KeyRound, LogOut } from 'lucide-react'
 import { getMyProfile, updateMyProfile } from '@/api/auth'
 import { useAuthStore } from '@/store/authStore'
 import type { UserProfile } from '@/types/auth'
 
 const schema = z.object({
   fullName:    z.string().min(1, 'Full name is required'),
-  phoneNumber: z.string().optional(),
-  address:     z.string().optional(),
+  email:       z.string().email('Invalid email format'),
+  phone:       z.string().optional(),
+  gender:      z.enum(['MALE', 'FEMALE', 'OTHER', '']).optional(),
 })
 type FormData = z.infer<typeof schema>
 
@@ -30,11 +31,13 @@ export default function ProfilePage() {
     getMyProfile()
       .then(res => {
         if (res.data.data) {
-          setProfile(res.data.data)
+          const p = res.data.data
+          setProfile(p)
           reset({
-            fullName:    res.data.data.fullName,
-            phoneNumber: res.data.data.phoneNumber ?? '',
-            address:     res.data.data.address ?? '',
+            fullName: p.fullName,
+            email:    p.email,
+            phone:    p.phone ?? '',
+            gender:   (p.gender as 'MALE' | 'FEMALE' | 'OTHER' | '') ?? '',
           })
         }
       })
@@ -46,7 +49,12 @@ export default function ProfilePage() {
     setApiError('')
     setSuccess('')
     try {
-      const res = await updateMyProfile(data)
+      const res = await updateMyProfile({
+        fullName: data.fullName,
+        email:    data.email,
+        phone:    data.phone || undefined,
+        gender:   data.gender || undefined,
+      })
       if (res.data.success && res.data.data) {
         setProfile(res.data.data)
         updateUser({ fullName: res.data.data.fullName })
@@ -141,27 +149,18 @@ export default function ProfilePage() {
             {apiError && <div className="alert-error mb-4">{apiError}</div>}
 
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-              {/* Read-only fields */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="form-label">Username</label>
-                  <div className="input-field flex items-center gap-2 opacity-50 cursor-not-allowed">
-                    <User className="w-4 h-4 text-slate-400" />
-                    <span>{profile?.username}</span>
-                  </div>
-                </div>
-                <div>
-                  <label className="form-label">Email</label>
-                  <div className="input-field flex items-center gap-2 opacity-50 cursor-not-allowed">
-                    <Mail className="w-4 h-4 text-slate-400" />
-                    <span className="truncate">{profile?.email}</span>
-                  </div>
+              {/* Read-only username */}
+              <div>
+                <label className="form-label">Username</label>
+                <div className="input-field flex items-center gap-2 opacity-50 cursor-not-allowed">
+                  <User className="w-4 h-4 text-slate-400" />
+                  <span>{profile?.username}</span>
                 </div>
               </div>
 
               {/* Editable fields */}
               <div>
-                <label htmlFor="fullName" className="form-label">Full Name</label>
+                <label htmlFor="fullName" className="form-label">Full Name <span className="text-red-400">*</span></label>
                 <input id="fullName" type="text" placeholder="Your full name"
                   className={`input-field ${errors.fullName ? 'error' : ''}`}
                   {...register('fullName')} />
@@ -169,23 +168,34 @@ export default function ProfilePage() {
               </div>
 
               <div>
-                <label htmlFor="phoneNumber" className="form-label">Phone Number</label>
+                <label htmlFor="email" className="form-label">Email <span className="text-red-400">*</span></label>
                 <div className="relative">
-                  <input id="phoneNumber" type="tel" placeholder="+84 xxx xxx xxxx"
+                  <input id="email" type="email" placeholder="your@email.com"
+                    className={`input-field pl-11 ${errors.email ? 'error' : ''}`}
+                    {...register('email')} />
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                </div>
+                {errors.email && <p className="form-error">{errors.email.message}</p>}
+              </div>
+
+              <div>
+                <label htmlFor="phone" className="form-label">Phone Number</label>
+                <div className="relative">
+                  <input id="phone" type="tel" placeholder="+84 xxx xxx xxxx"
                     className="input-field pl-11"
-                    {...register('phoneNumber')} />
+                    {...register('phone')} />
                   <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 </div>
               </div>
 
               <div>
-                <label htmlFor="address" className="form-label">Address</label>
-                <div className="relative">
-                  <input id="address" type="text" placeholder="Your address"
-                    className="input-field pl-11"
-                    {...register('address')} />
-                  <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                </div>
+                <label htmlFor="gender" className="form-label">Gender</label>
+                <select id="gender" className="input-field" {...register('gender')}>
+                  <option value="">Select gender</option>
+                  <option value="MALE">Male</option>
+                  <option value="FEMALE">Female</option>
+                  <option value="OTHER">Other</option>
+                </select>
               </div>
 
               <div className="pt-2">

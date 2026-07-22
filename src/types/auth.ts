@@ -13,24 +13,28 @@ export interface LoginResponse {
   role: string
 }
 
+/** Matches BE: UserProfileResponse */
 export interface UserProfile {
   id: number
   username: string
-  email: string
   fullName: string
-  phoneNumber?: string
-  address?: string
+  email: string
+  phone?: string        // BE field is 'phone' not 'phoneNumber'
+  avatarUrl?: string
+  dateOfBirth?: string  // "dd/MM/yyyy"
+  gender?: string       // MALE | FEMALE | OTHER
   department?: string
   position?: string
   role: string
-  status: string
-  createdAt: string
 }
 
+/** Matches BE: UpdateProfileRequest — email is @NotBlank so always required */
 export interface UpdateProfileRequest {
   fullName: string
-  phoneNumber?: string
-  address?: string
+  email: string
+  phone?: string
+  dateOfBirth?: string  // "dd/MM/yyyy"
+  gender?: string
 }
 
 export interface ForgotPasswordRequest {
