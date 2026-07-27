@@ -72,4 +72,20 @@
   .alert-error {
     @apply bg-red-500/10 border border-red-500/30 text-red-300 px-4 py-3 rounded-xl text-sm;
   }
+
+  /* ── Icon Button ─────────────────────────────────────── */
+  .btn-icon {
+    @apply p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white
+           border border-slate-700 rounded-xl transition-all duration-200
+           flex items-center justify-center;
+  }
+
+  /* ── Secondary button (not full-width in toolbars) ─── */
+  .btn-secondary {
+    @apply bg-slate-800 hover:bg-slate-700 text-white font-medium py-2.5 px-4 rounded-xl
+           border border-slate-700 transition-all duration-200
+           focus:outline-none focus:ring-2 focus:ring-slate-500
+           flex items-center justify-center gap-2 whitespace-nowrap;
+  }
 }
+

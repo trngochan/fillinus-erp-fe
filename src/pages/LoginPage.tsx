@@ -29,7 +29,8 @@ export default function LoginPage() {
       const res = await loginApi(data)
       if (res.data.success && res.data.data) {
         login(res.data.data)
-        navigate('/profile')
+        const role = res.data.data.role
+        navigate(role === 'SALE' ? '/sales' : '/profile')
       } else {
         setApiError(res.data.message || 'Login failed')
       }
@@ -118,7 +119,14 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-slate-500 text-xs mt-6">
+        <p className="text-center text-slate-400 text-sm mt-5">
+          Don't have an account?{' '}
+          <Link to="/register" className="text-brand-400 hover:text-brand-300 font-medium transition-colors">
+            Register as Sales Rep
+          </Link>
+        </p>
+
+        <p className="text-center text-slate-500 text-xs mt-4">
           © 2024 FILLINUS Entertainment. All rights reserved.
         </p>
       </div>
