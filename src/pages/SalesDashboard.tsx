@@ -76,7 +76,7 @@ function LeadModal({
                 type={f.type}
                 placeholder={f.placeholder}
                 className="input-field"
-                value={(form as Record<string, string>)[f.key] ?? ''}
+                value={(form as unknown as Record<string, string>)[f.key] ?? ''}
                 onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
               />
             </div>
