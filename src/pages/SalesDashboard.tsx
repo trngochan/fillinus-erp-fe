@@ -9,9 +9,9 @@ import { useAuthStore } from '@/store/authStore'
 import {
   getLeads, createLead, updateLead, deleteLead, convertLead,
   importLeadsExcel, downloadLeadTemplate,
-  getMyOpportunities, updateOpportunityStatus,
+  getMyOpportunities, updateOpportunityStatus, updateOpportunity,
 } from '@/api/sales'
-import type { Lead, Opportunity, CreateLeadRequest } from '@/api/sales'
+import type { Lead, Opportunity, CreateLeadRequest, UpdateOpportunityDetailsRequest } from '@/api/sales'
 
 // ─── Status badge colours ──────────────────────────────────────
 const leadStatusColor: Record<string, string> = {
@@ -93,6 +93,73 @@ function LeadModal({
   )
 }
 
+// ─── Opportunity Edit Modal ─────────────────────────────────────
+function OpportunityModal({
+  initial, onSave, onClose,
+}: {
+  initial: Opportunity
+  onSave: (data: UpdateOpportunityDetailsRequest) => Promise<void>
+  onClose: () => void
+}) {
+  const [form, setForm] = useState<UpdateOpportunityDetailsRequest>({
+    companyName:   initial.companyName   ?? '',
+    contactPerson: initial.contactPerson ?? '',
+    phone:         initial.phone         ?? '',
+    email:         initial.email         ?? '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    try { await onSave(form) } catch (err: unknown) {
+      setError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">Edit Opportunity — {initial.opportunityId}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-4">
+          {error && <div className="alert-error">{error}</div>}
+          <div>
+            <label className="form-label">Lead Name</label>
+            <input type="text" disabled value={initial.leadName} className="input-field opacity-60 cursor-not-allowed" />
+          </div>
+          {[
+            { label: 'Company',     key: 'companyName',   type: 'text',  placeholder: 'Company name' },
+            { label: 'Contact',     key: 'contactPerson', type: 'text',  placeholder: 'Contact person' },
+            { label: 'Phone',       key: 'phone',         type: 'tel',   placeholder: '+84 xxx xxx xxx' },
+            { label: 'Email',       key: 'email',         type: 'email', placeholder: 'contact@company.com' },
+          ].map(f => (
+            <div key={f.key}>
+              <label className="form-label">{f.label}</label>
+              <input
+                type={f.type}
+                placeholder={f.placeholder}
+                className="input-field"
+                value={(form as unknown as Record<string, string>)[f.key] ?? ''}
+                onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
+              />
+            </div>
+          ))}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> Save Changes</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Sales Dashboard ──────────────────────────────────────
 export default function SalesDashboard() {
   const { user, logout } = useAuthStore()
@@ -115,6 +182,8 @@ export default function SalesDashboard() {
   const [opps,      setOpps]      = useState<Opportunity[]>([])
   const [oppsLoading, setOppsLoading] = useState(false)
   const [updatingOpp, setUpdatingOpp] = useState<number | null>(null)
+  const [oppModalOpen, setOppModalOpen] = useState(false)
+  const [editOpp,   setEditOpp]   = useState<Opportunity | null>(null)
 
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
 
@@ -206,6 +275,15 @@ export default function SalesDashboard() {
       a.click()
       URL.revokeObjectURL(url)
     } catch { showToast('Download failed', 'error') }
+  }
+
+  const handleSaveOpportunity = async (data: UpdateOpportunityDetailsRequest) => {
+    if (!editOpp) return
+    const res = await updateOpportunity(editOpp.id, data)
+    setOpps(prev => prev.map(o => o.id === editOpp.id ? res.data.data! : o))
+    showToast('Opportunity updated successfully')
+    setOppModalOpen(false)
+    setEditOpp(null)
   }
 
   const handleOppStatus = async (opp: Opportunity, status: string) => {
@@ -435,24 +513,24 @@ export default function SalesDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
-                    {['Opp ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Status', 'Converted On'].map(h => (
+                    {['Opp ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Status', 'Converted On', 'Actions'].map(h => (
                       <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
                   {oppsLoading ? (
-                    <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                       Loading opportunities...
                     </td></tr>
                   ) : opps.length === 0 ? (
-                    <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
                       <Briefcase className="w-10 h-10 mx-auto mb-3 opacity-30" />
                       No opportunities yet. Convert a lead to get started!
                     </td></tr>
                   ) : opps.map(opp => (
-                    <tr key={opp.id} className="hover:bg-slate-800/40 transition-colors">
+                    <tr key={opp.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{opp.opportunityId}</td>
                       <td className="px-4 py-3.5 font-medium text-white">{opp.leadName}</td>
                       <td className="px-4 py-3.5 text-slate-300">{opp.companyName || '—'}</td>
@@ -486,6 +564,14 @@ export default function SalesDashboard() {
                       <td className="px-4 py-3.5 text-slate-400 text-xs">
                         {new Date(opp.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => { setEditOpp(opp); setOppModalOpen(true) }}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -506,6 +592,15 @@ export default function SalesDashboard() {
           initial={editLead}
           onSave={handleSaveLead}
           onClose={() => { setModalOpen(false); setEditLead(null) }}
+        />
+      )}
+
+      {/* Opportunity Edit Modal */}
+      {oppModalOpen && editOpp && (
+        <OpportunityModal
+          initial={editOpp}
+          onSave={handleSaveOpportunity}
+          onClose={() => { setOppModalOpen(false); setEditOpp(null) }}
         />
       )}
     </div>

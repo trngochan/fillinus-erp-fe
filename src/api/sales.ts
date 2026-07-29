@@ -45,6 +45,13 @@ export interface CreateLeadRequest {
   email?: string
 }
 
+export interface UpdateOpportunityDetailsRequest {
+  companyName?: string
+  contactPerson?: string
+  phone?: string
+  email?: string
+}
+
 // ─── Register ─────────────────────────────────────────────────
 export const register = (data: RegisterRequest) =>
   api.post<ApiResponse<LoginResponse>>('/auth/register', data)
@@ -82,6 +89,12 @@ export const downloadLeadTemplate = () =>
 // ─── Opportunities ────────────────────────────────────────────
 export const getMyOpportunities = () =>
   api.get<ApiResponse<Opportunity[]>>('/opportunities')
+
+export const getOpportunity = (id: number) =>
+  api.get<ApiResponse<Opportunity>>(`/opportunities/${id}`)
+
+export const updateOpportunity = (id: number, data: UpdateOpportunityDetailsRequest) =>
+  api.put<ApiResponse<Opportunity>>(`/opportunities/${id}`, data)
 
 export const updateOpportunityStatus = (id: number, status: string) =>
   api.put<ApiResponse<Opportunity>>(`/opportunities/${id}/status`, { status })
