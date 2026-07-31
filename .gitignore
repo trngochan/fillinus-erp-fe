@@ -3,3 +3,8 @@ dist/
 .env
 .env.local
 *.log
+
+# Personal agent rules/skills — local use only, not shared via git
+AGENTS.md
+.claude/
+docs/templates/

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, UserPlus, Loader2, Shield } from 'lucide-react'
 import { register as registerApi } from '@/api/sales'
+import { getApiErrorMessage } from '@/api/axios'
 import { useAuthStore } from '@/store/authStore'
 
 const schema = z.object({
@@ -43,12 +44,10 @@ export default function RegisterPage() {
         login(res.data.data)
         navigate('/sales')
       } else {
-        setApiError(res.data.message || 'Registration failed')
+        setApiError(res.data.error || res.data.message || 'Registration failed')
       }
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })
-        ?.response?.data?.message
-      setApiError(msg || 'Registration failed. Please try again.')
+      setApiError(getApiErrorMessage(err, 'Registration failed. Please try again.'))
     }
   }
 

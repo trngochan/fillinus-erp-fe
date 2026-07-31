@@ -55,8 +55,11 @@ export interface ChangePasswordRequest {
 }
 
 // ─── Generic API wrapper ──────────────────────────────────────
+// BE puts the success message in `message` and the failure reason in `error`
+// (see ApiResponse.java) — both are omitted (not just empty) when unused.
 export interface ApiResponse<T> {
   success: boolean
-  message: string
+  message?: string
+  error?: string
   data?: T
 }

@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, LogIn, Loader2, Shield } from 'lucide-react'
 import { login as loginApi } from '@/api/auth'
+import { getApiErrorMessage } from '@/api/axios'
 import { useAuthStore } from '@/store/authStore'
 
 const schema = z.object({
@@ -32,12 +33,10 @@ export default function LoginPage() {
         const role = res.data.data.role
         navigate(role === 'SALE' ? '/sales' : '/profile')
       } else {
-        setApiError(res.data.message || 'Login failed')
+        setApiError(res.data.error || res.data.message || 'Login failed')
       }
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })
-        ?.response?.data?.message
-      setApiError(msg || 'Invalid username or password')
+      setApiError(getApiErrorMessage(err, 'Invalid username or password'))
     }
   }
 

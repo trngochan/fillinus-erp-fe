@@ -2,36 +2,67 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search, Plus, Upload, Download, RefreshCw,
-  Trash2, Edit2, ArrowRightCircle, ChevronDown,
-  LogOut, User, Briefcase, Users, TrendingUp, X, Check, Loader2
+  Trash2, Edit2, ArrowRightCircle, Eye, Send,
+  LogOut, User, Briefcase, Users, TrendingUp, FileText, X, Check, Loader2
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
+import { getApiErrorMessage } from '@/api/axios'
+import ConfirmDialog from '@/components/ConfirmDialog'
+import Pagination from '@/components/Pagination'
 import {
   getLeads, createLead, updateLead, deleteLead, convertLead,
-  importLeadsExcel, downloadLeadTemplate,
-  getMyOpportunities, updateOpportunityStatus, updateOpportunity,
+  importLeadsExcel, downloadLeadTemplate, getSalesReps,
+  getMyOpportunities, createOpportunity, updateOpportunity, deleteOpportunity,
+  getMyQuotations, createQuotationFromOpportunity, updateQuotation, deleteQuotation, createDealNegotiation,
 } from '@/api/sales'
-import type { Lead, Opportunity, CreateLeadRequest, UpdateOpportunityDetailsRequest } from '@/api/sales'
+import type {
+  Lead, Opportunity, OpportunityStage, OpportunityDetailRequest,
+  CreateLeadRequest, ConvertLeadRequest, CreateOpportunityRequest,
+  Quotation, QuotationCurrency, QuotationDetailRequest,
+  CreateQuotationFromOpportunityRequest, UpdateQuotationRequest,
+  SalesRep, LeadSource,
+} from '@/api/sales'
+
+const LEAD_SOURCES: LeadSource[] = ['New Client', 'Existing Client', 'Referral', 'Digital Lead']
+const PROJECT_TYPES = ['Agency', 'Label', 'Others'] as const
+const OPPORTUNITY_STAGES: OpportunityStage[] =
+  ['PROSPECTING', 'QUALIFICATION', 'PROPOSAL', 'NEGOTIATION', 'CLOSED_WON', 'CLOSED_LOST']
+const CURRENCIES: QuotationCurrency[] = ['VND', 'USD']
 
 // ─── Status badge colours ──────────────────────────────────────
 const leadStatusColor: Record<string, string> = {
   NEW:         'bg-blue-500/20 text-blue-300 border-blue-500/30',
   IN_PROGRESS: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
-  CONVERTED:   'bg-green-500/20 text-green-300 border-green-500/30',
-  CLOSED:      'bg-slate-500/20 text-slate-400 border-slate-500/30',
+  QUALIFIED:   'bg-green-500/20 text-green-300 border-green-500/30',
+  REJECTED:    'bg-red-500/20 text-red-300 border-red-500/30',
 }
-const oppStatusColor: Record<string, string> = {
-  NEW:         'bg-blue-500/20 text-blue-300 border-blue-500/30',
-  IN_PROGRESS: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
-  WON:         'bg-green-500/20 text-green-300 border-green-500/30',
-  LOST:        'bg-red-500/20 text-red-300 border-red-500/30',
+const stageColor: Record<string, string> = {
+  PROSPECTING:  'bg-slate-500/20 text-slate-300 border-slate-500/30',
+  QUALIFICATION:'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  PROPOSAL:     'bg-purple-500/20 text-purple-300 border-purple-500/30',
+  NEGOTIATION:  'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
+  CLOSED_WON:   'bg-green-500/20 text-green-300 border-green-500/30',
+  CLOSED_LOST:  'bg-red-500/20 text-red-300 border-red-500/30',
+}
+const lifecycleStatusColor: Record<string, string> = {
+  OPEN:      'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  CONVERTED: 'bg-green-500/20 text-green-300 border-green-500/30',
+  CLOSED:    'bg-slate-500/20 text-slate-400 border-slate-500/30',
+}
+const quotationStatusColor: Record<string, string> = {
+  DRAFT:    'bg-slate-500/20 text-slate-300 border-slate-500/30',
+  SENT:     'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  ACCEPTED: 'bg-green-500/20 text-green-300 border-green-500/30',
+  REJECTED: 'bg-red-500/20 text-red-300 border-red-500/30',
+  EXPIRED:  'bg-orange-500/20 text-orange-300 border-orange-500/30',
 }
 
 // ─── Lead Form Modal ───────────────────────────────────────────
 function LeadModal({
-  initial, onSave, onClose,
+  initial, salesReps, onSave, onClose,
 }: {
   initial?: Lead | null
+  salesReps: SalesRep[]
   onSave: (data: CreateLeadRequest) => Promise<void>
   onClose: () => void
 }) {
@@ -41,34 +72,42 @@ function LeadModal({
     contactPerson: initial?.contactPerson ?? '',
     phone:         initial?.phone         ?? '',
     email:         initial?.email         ?? '',
+    source:        initial?.source        ?? '',
+    salesRepId:    initial?.salesRepId    ?? undefined,
+    remark:        initial?.remark        ?? '',
+    status:        (initial?.status as 'NEW' | 'IN_PROGRESS' | 'REJECTED' | undefined) ?? undefined,
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.leadName.trim()) { setError('Lead Name is required'); return }
+    if (!form.leadName.trim())    { setError('Lead Name is required'); return }
+    if (!form.companyName?.trim()) { setError('Company is required'); return }
+    if (!form.phone?.trim())      { setError('Phone is required'); return }
+    if (!form.email?.trim())      { setError('Email is required'); return }
+    if (!form.salesRepId)         { setError('Sales Rep is required'); return }
     setSaving(true)
     try { await onSave(form) } catch (err: unknown) {
-      setError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed')
+      setError(getApiErrorMessage(err, 'Save failed'))
     } finally { setSaving(false) }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
-          <h3 className="text-lg font-semibold text-white">{initial ? 'Edit Lead' : 'Create New Lead'}</h3>
+          <h3 className="text-lg font-semibold text-white">{initial ? 'Edit Lead' : 'Create or Add New'}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4">
           {error && <div className="alert-error">{error}</div>}
           {[
             { label: 'Lead Name *', key: 'leadName',      type: 'text',  placeholder: 'Company contact name' },
-            { label: 'Company',     key: 'companyName',   type: 'text',  placeholder: 'Company name' },
+            { label: 'Company *',   key: 'companyName',   type: 'text',  placeholder: 'Company name' },
             { label: 'Contact',     key: 'contactPerson', type: 'text',  placeholder: 'Contact person' },
-            { label: 'Phone',       key: 'phone',         type: 'tel',   placeholder: '+84 xxx xxx xxx' },
-            { label: 'Email',       key: 'email',         type: 'email', placeholder: 'contact@company.com' },
+            { label: 'Phone *',     key: 'phone',         type: 'tel',   placeholder: '+84 xxx xxx xxx' },
+            { label: 'Email *',     key: 'email',         type: 'email', placeholder: 'contact@company.com' },
           ].map(f => (
             <div key={f.key}>
               <label className="form-label">{f.label}</label>
@@ -81,10 +120,66 @@ function LeadModal({
               />
             </div>
           ))}
+
+          <div>
+            <label className="form-label">Source</label>
+            <select
+              className="input-field"
+              value={form.source ?? ''}
+              onChange={e => setForm(prev => ({ ...prev, source: e.target.value as LeadSource | '' }))}
+            >
+              <option value="">— Select source —</option>
+              {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="form-label">Sales Rep *</label>
+            <select
+              className="input-field"
+              value={form.salesRepId ?? ''}
+              onChange={e => setForm(prev => ({ ...prev, salesRepId: e.target.value ? Number(e.target.value) : undefined }))}
+            >
+              <option value="">— Select Sales Rep —</option>
+              {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
+            </select>
+          </div>
+
+          {initial && (
+            <div>
+              <label className="form-label">Status</label>
+              <select
+                className="input-field"
+                value={form.status ?? initial.status}
+                disabled={initial.status === 'QUALIFIED'}
+                onChange={e => setForm(prev => ({ ...prev, status: e.target.value as 'NEW' | 'IN_PROGRESS' | 'REJECTED' }))}
+              >
+                <option value="NEW">New</option>
+                <option value="IN_PROGRESS">In Progress</option>
+                <option value="REJECTED">Rejected</option>
+                {initial.status === 'QUALIFIED' && <option value="QUALIFIED">Qualified</option>}
+              </select>
+              {initial.status === 'QUALIFIED' && (
+                <p className="text-xs text-slate-500 mt-1">Qualified is set automatically by Convert — cannot be edited manually.</p>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label className="form-label">Remark</label>
+            <textarea
+              className="input-field"
+              rows={3}
+              placeholder="Notes about this lead..."
+              value={form.remark ?? ''}
+              onChange={e => setForm(prev => ({ ...prev, remark: e.target.value }))}
+            />
+          </div>
+
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary flex-1">
-              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create Lead'}</>}
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create or Add New'}</>}
             </button>
           </div>
         </form>
@@ -93,66 +188,505 @@ function LeadModal({
   )
 }
 
-// ─── Opportunity Edit Modal ─────────────────────────────────────
+// ─── Opportunity Create/Edit Modal (Header + Detail line items) ────
 function OpportunityModal({
-  initial, onSave, onClose,
+  initial, salesReps, onSave, onClose,
 }: {
-  initial: Opportunity
-  onSave: (data: UpdateOpportunityDetailsRequest) => Promise<void>
+  initial?: Opportunity | null
+  salesReps: SalesRep[]
+  onSave: (data: CreateOpportunityRequest) => Promise<void>
   onClose: () => void
 }) {
-  const [form, setForm] = useState<UpdateOpportunityDetailsRequest>({
-    companyName:   initial.companyName   ?? '',
-    contactPerson: initial.contactPerson ?? '',
-    phone:         initial.phone         ?? '',
-    email:         initial.email         ?? '',
+  const [form, setForm] = useState({
+    opportunityName: initial?.opportunityName ?? '',
+    customer:        initial?.customer        ?? '',
+    salesRepId:      initial?.salesRepId      ?? undefined as number | undefined,
+    stage:           initial?.stage           ?? 'PROSPECTING' as OpportunityStage,
+    expectedRevenue: initial?.expectedRevenue?.toString() ?? '0',
+    description:     initial?.description     ?? '',
   })
+  const [details, setDetails] = useState<OpportunityDetailRequest[]>(
+    initial?.details?.length
+      ? initial.details.map(d => ({ serviceProduct: d.serviceProduct, quantity: d.quantity, unit: d.unit ?? '', remark: d.remark ?? '' }))
+      : [{ serviceProduct: '', quantity: 1, unit: '', remark: '' }]
+  )
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
+  const addRow = () => setDetails(prev => [...prev, { serviceProduct: '', quantity: 1, unit: '', remark: '' }])
+  const removeRow = (i: number) => setDetails(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev)
+  const updateRow = (i: number, patch: Partial<OpportunityDetailRequest>) =>
+    setDetails(prev => prev.map((d, idx) => idx === i ? { ...d, ...patch } : d))
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!form.opportunityName.trim()) { setError('Opportunity Name is required'); return }
+    if (!form.customer.trim())        { setError('Customer is required'); return }
+    if (!form.salesRepId)             { setError('Sales Rep is required'); return }
+    if (details.some(d => !d.serviceProduct.trim() || !d.quantity || d.quantity <= 0)) {
+      setError('Every detail row needs a Service/Product and a Quantity greater than 0'); return
+    }
     setSaving(true)
-    try { await onSave(form) } catch (err: unknown) {
-      setError((err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Save failed')
+    try {
+      await onSave({
+        opportunityName: form.opportunityName,
+        customer: form.customer,
+        salesRepId: form.salesRepId!,
+        stage: form.stage,
+        expectedRevenue: Number(form.expectedRevenue) || 0,
+        description: form.description,
+        details,
+      })
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Save failed'))
     } finally { setSaving(false) }
   }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
-          <h3 className="text-lg font-semibold text-white">Edit Opportunity — {initial.opportunityId}</h3>
+          <h3 className="text-lg font-semibold text-white">
+            {initial ? `Edit Opportunity — ${initial.opportunityId}` : 'Create Opportunity'}
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-5">
+          {error && <div className="alert-error">{error}</div>}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="form-label">Opportunity Name *</label>
+              <input type="text" className="input-field" value={form.opportunityName}
+                onChange={e => setForm(prev => ({ ...prev, opportunityName: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Customer *</label>
+              <input type="text" className="input-field" placeholder="Customer / company name" value={form.customer}
+                onChange={e => setForm(prev => ({ ...prev, customer: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Sales Rep *</label>
+              <select className="input-field" value={form.salesRepId ?? ''}
+                onChange={e => setForm(prev => ({ ...prev, salesRepId: e.target.value ? Number(e.target.value) : undefined }))}>
+                <option value="">— Select Sales Rep —</option>
+                {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Stage</label>
+              <select className="input-field" value={form.stage}
+                onChange={e => setForm(prev => ({ ...prev, stage: e.target.value as OpportunityStage }))}>
+                {OPPORTUNITY_STAGES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Expected Revenue</label>
+              <input type="number" min="0" step="0.01" className="input-field" value={form.expectedRevenue}
+                onChange={e => setForm(prev => ({ ...prev, expectedRevenue: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Description</label>
+              <textarea className="input-field" rows={2} value={form.description}
+                onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))} />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="form-label mb-0">Detail — Service / Product *</label>
+              <button type="button" onClick={addRow} className="btn-ghost text-xs">+ Add Row</button>
+            </div>
+            <div className="space-y-2">
+              {details.map((d, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-start bg-white/5 rounded-xl p-2.5">
+                  <input type="text" placeholder="Service/Product *" className="input-field col-span-4 py-2 text-sm"
+                    value={d.serviceProduct} onChange={e => updateRow(i, { serviceProduct: e.target.value })} />
+                  <input type="number" min="0" step="0.01" placeholder="Qty" className="input-field col-span-2 py-2 text-sm"
+                    value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                  <input type="text" placeholder="Unit" className="input-field col-span-2 py-2 text-sm"
+                    value={d.unit} onChange={e => updateRow(i, { unit: e.target.value })} />
+                  <input type="text" placeholder="Remark" className="input-field col-span-3 py-2 text-sm"
+                    value={d.remark} onChange={e => updateRow(i, { remark: e.target.value })} />
+                  <button type="button" onClick={() => removeRow(i)} disabled={details.length <= 1}
+                    className="col-span-1 p-2 text-slate-400 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed" title="Remove row">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create Opportunity'}</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Convert Lead -> Opportunity Modal ──────────────────────────
+function ConvertLeadModal({
+  lead, salesReps, onConvert, onClose,
+}: {
+  lead: Lead
+  salesReps: SalesRep[]
+  onConvert: (data: ConvertLeadRequest) => Promise<void>
+  onClose: () => void
+}) {
+  const [form, setForm] = useState<Omit<ConvertLeadRequest, 'details'>>({
+    opportunityName: lead.leadName,
+    projectType: 'Agency',
+    expectedDealValue: undefined,
+    salesRepId: lead.salesRepId ?? undefined as unknown as number,
+  })
+  const [details, setDetails] = useState<OpportunityDetailRequest[]>(
+    [{ serviceProduct: '', quantity: 1, unit: '', remark: '' }]
+  )
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const addRow = () => setDetails(prev => [...prev, { serviceProduct: '', quantity: 1, unit: '', remark: '' }])
+  const removeRow = (i: number) => setDetails(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev)
+  const updateRow = (i: number, patch: Partial<OpportunityDetailRequest>) =>
+    setDetails(prev => prev.map((d, idx) => idx === i ? { ...d, ...patch } : d))
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.opportunityName.trim()) { setError('Opportunity Name is required'); return }
+    if (!form.salesRepId)             { setError('Sales Rep is required'); return }
+    if (details.some(d => !d.serviceProduct.trim() || !d.quantity || d.quantity <= 0)) {
+      setError('Every detail row needs a Service/Product and a Quantity greater than 0'); return
+    }
+    setSaving(true)
+    try { await onConvert({ ...form, details }) } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Conversion failed'))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">Convert "{lead.leadName}" to Opportunity</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4">
           {error && <div className="alert-error">{error}</div>}
           <div>
-            <label className="form-label">Lead Name</label>
-            <input type="text" disabled value={initial.leadName} className="input-field opacity-60 cursor-not-allowed" />
+            <label className="form-label">Opportunity Name *</label>
+            <input type="text" className="input-field" value={form.opportunityName}
+              onChange={e => setForm(prev => ({ ...prev, opportunityName: e.target.value }))} />
           </div>
-          {[
-            { label: 'Company',     key: 'companyName',   type: 'text',  placeholder: 'Company name' },
-            { label: 'Contact',     key: 'contactPerson', type: 'text',  placeholder: 'Contact person' },
-            { label: 'Phone',       key: 'phone',         type: 'tel',   placeholder: '+84 xxx xxx xxx' },
-            { label: 'Email',       key: 'email',         type: 'email', placeholder: 'contact@company.com' },
-          ].map(f => (
-            <div key={f.key}>
-              <label className="form-label">{f.label}</label>
-              <input
-                type={f.type}
-                placeholder={f.placeholder}
-                className="input-field"
-                value={(form as unknown as Record<string, string>)[f.key] ?? ''}
-                onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
-              />
+          <div>
+            <label className="form-label">Project Type *</label>
+            <select className="input-field" value={form.projectType}
+              onChange={e => setForm(prev => ({ ...prev, projectType: e.target.value as ConvertLeadRequest['projectType'] }))}>
+              {PROJECT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="form-label">Expected Deal Value</label>
+            <input type="number" min="0" step="0.01" className="input-field" value={form.expectedDealValue ?? ''}
+              onChange={e => setForm(prev => ({ ...prev, expectedDealValue: e.target.value ? Number(e.target.value) : undefined }))} />
+          </div>
+          <div>
+            <label className="form-label">Sales Rep *</label>
+            <select className="input-field" value={form.salesRepId ?? ''}
+              onChange={e => setForm(prev => ({ ...prev, salesRepId: Number(e.target.value) }))}>
+              <option value="">— Select Sales Rep —</option>
+              {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="form-label mb-0">Detail — Service / Product *</label>
+              <button type="button" onClick={addRow} className="btn-ghost text-xs">+ Add Row</button>
             </div>
-          ))}
+            <div className="space-y-2">
+              {details.map((d, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-start bg-white/5 rounded-xl p-2.5">
+                  <input type="text" placeholder="Service/Product *" className="input-field col-span-4 py-2 text-sm"
+                    value={d.serviceProduct} onChange={e => updateRow(i, { serviceProduct: e.target.value })} />
+                  <input type="number" min="0" step="0.01" placeholder="Qty" className="input-field col-span-2 py-2 text-sm"
+                    value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                  <input type="text" placeholder="Unit" className="input-field col-span-2 py-2 text-sm"
+                    value={d.unit} onChange={e => updateRow(i, { unit: e.target.value })} />
+                  <input type="text" placeholder="Remark" className="input-field col-span-3 py-2 text-sm"
+                    value={d.remark} onChange={e => updateRow(i, { remark: e.target.value })} />
+                  <button type="button" onClick={() => removeRow(i)} disabled={details.length <= 1}
+                    className="col-span-1 p-2 text-slate-400 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed" title="Remove row">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary flex-1">
-              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> Save Changes</>}
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Converting...</> : <><ArrowRightCircle className="w-4 h-4" /> Convert</>}
             </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Create Quotation Modal (from an Opportunity row) ───────────
+function CreateQuotationModal({
+  opportunity, onCreate, onClose,
+}: {
+  opportunity: Opportunity
+  onCreate: (data: CreateQuotationFromOpportunityRequest) => Promise<void>
+  onClose: () => void
+}) {
+  const [form, setForm] = useState({
+    expiredDate: '', currency: 'VND' as QuotationCurrency, remark: '',
+  })
+  const [prices, setPrices] = useState<Record<number, { standardPrice: string; unitPrice: string }>>(
+    Object.fromEntries(opportunity.details.map(d => [d.id, { standardPrice: '0', unitPrice: '0' }]))
+  )
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const setPrice = (detailId: number, patch: Partial<{ standardPrice: string; unitPrice: string }>) =>
+    setPrices(prev => ({ ...prev, [detailId]: { ...prev[detailId], ...patch } }))
+
+  const totalAmount = opportunity.details.reduce(
+    (sum, d) => sum + d.quantity * (Number(prices[d.id]?.unitPrice) || 0), 0
+  )
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.expiredDate) { setError('Expired Date is required'); return }
+    if (opportunity.details.some(d => prices[d.id]?.unitPrice === '' || Number(prices[d.id]?.unitPrice) < 0)) {
+      setError('Enter a Unit Price (>= 0) for every detail line'); return
+    }
+    setSaving(true)
+    try {
+      await onCreate({
+        ...form,
+        detailPrices: opportunity.details.map(d => ({
+          opportunityDetailId: d.id,
+          standardPrice: Number(prices[d.id]?.standardPrice) || 0,
+          unitPrice: Number(prices[d.id]?.unitPrice) || 0,
+        })),
+      })
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to create quotation'))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">Create Quotation — {opportunity.opportunityId}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-4">
+          {error && <div className="alert-error">{error}</div>}
+          <p className="text-sm text-slate-400">
+            Customer, Sales Rep and Detail lines (Product/Qty/Unit) are inherited automatically from this Opportunity — enter the price below.
+          </p>
+          <div>
+            <label className="form-label">Expired Date *</label>
+            <input type="date" className="input-field" value={form.expiredDate}
+              onChange={e => setForm(prev => ({ ...prev, expiredDate: e.target.value }))} />
+          </div>
+          <div>
+            <label className="form-label">Currency</label>
+            <select className="input-field" value={form.currency}
+              onChange={e => setForm(prev => ({ ...prev, currency: e.target.value as QuotationCurrency }))}>
+              {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="form-label">Detail — Product / Service</label>
+            {opportunity.details.length === 0 && (
+              <div className="alert-error text-sm">
+                This Opportunity has no Service/Product line yet — edit it first (Add Row) before creating a Quotation.
+              </div>
+            )}
+            <div className="space-y-2">
+              {opportunity.details.map(d => (
+                <div key={d.id} className="grid grid-cols-12 gap-2 items-center bg-white/5 rounded-xl p-2.5">
+                  <div className="col-span-4 text-sm text-slate-200 truncate" title={d.serviceProduct}>{d.serviceProduct}</div>
+                  <div className="col-span-2 text-sm text-slate-400 tabular-nums">{d.quantity} {d.unit ?? ''}</div>
+                  <input type="number" min="0" step="0.01" placeholder="Std Price" className="input-field col-span-2 py-2 text-sm"
+                    value={prices[d.id]?.standardPrice ?? ''} onChange={e => setPrice(d.id, { standardPrice: e.target.value })} />
+                  <input type="number" min="0" step="0.01" placeholder="Unit Price *" className="input-field col-span-2 py-2 text-sm"
+                    value={prices[d.id]?.unitPrice ?? ''} onChange={e => setPrice(d.id, { unitPrice: e.target.value })} />
+                  <div className="col-span-2 text-sm text-slate-300 tabular-nums text-right pr-1">
+                    {(d.quantity * (Number(prices[d.id]?.unitPrice) || 0)).toLocaleString('en-US')}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end mt-3 text-sm">
+              <span className="text-slate-400 mr-2">Total Amount:</span>
+              <span className="text-white font-semibold tabular-nums">{totalAmount.toLocaleString('en-US')} {form.currency}</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label">Remark</label>
+            <textarea className="input-field" rows={2} value={form.remark}
+              onChange={e => setForm(prev => ({ ...prev, remark: e.target.value }))} />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving || opportunity.details.length === 0} className="btn-primary flex-1">
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</> : <><FileText className="w-4 h-4" /> Create Quotation</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Quotation View/Edit Modal ───────────────────────────────────
+function QuotationModal({
+  initial, onSave, onClose,
+}: {
+  initial: Quotation
+  onSave: (data: UpdateQuotationRequest) => Promise<void>
+  onClose: () => void
+}) {
+  const editable = initial.status === 'DRAFT'
+  const [form, setForm] = useState({
+    quotationDate: initial.quotationDate,
+    expiredDate:   initial.expiredDate,
+    currency:      initial.currency,
+    remark:        initial.remark ?? '',
+  })
+  const [details, setDetails] = useState<QuotationDetailRequest[]>(
+    initial.details.map(d => ({
+      productService: d.productService, quantity: d.quantity, unit: d.unit ?? '',
+      standardPrice: d.standardPrice, unitPrice: d.unitPrice, remark: d.remark ?? '',
+    }))
+  )
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const totalAmount = details.reduce((sum, d) => sum + (d.quantity || 0) * (d.unitPrice || 0), 0)
+
+  const addRow = () => setDetails(prev => [...prev, { productService: '', quantity: 1, unit: '', standardPrice: 0, unitPrice: 0, remark: '' }])
+  const removeRow = (i: number) => setDetails(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev)
+  const updateRow = (i: number, patch: Partial<QuotationDetailRequest>) =>
+    setDetails(prev => prev.map((d, idx) => idx === i ? { ...d, ...patch } : d))
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (details.some(d => !d.productService.trim() || !d.quantity || d.quantity <= 0)) {
+      setError('Every detail row needs a Product/Service and a Quantity greater than 0'); return
+    }
+    setSaving(true)
+    try {
+      await onSave({ ...form, details })
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Save failed'))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">
+            {editable ? 'Edit' : 'View'} Quotation — {initial.quotationNo}
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-5">
+          {error && <div className="alert-error">{error}</div>}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="form-label">Opportunity</label>
+              <input disabled value={initial.opportunityName ?? '—'} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div><label className="form-label">Customer</label>
+              <input disabled value={initial.customer} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div><label className="form-label">Sales Rep</label>
+              <input disabled value={initial.salesRepName ?? '—'} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div><label className="form-label">Status</label>
+              <input disabled value={initial.status} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div>
+              <label className="form-label">Quotation Date *</label>
+              <input type="date" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.quotationDate} onChange={e => setForm(prev => ({ ...prev, quotationDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Expired Date *</label>
+              <input type="date" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.expiredDate} onChange={e => setForm(prev => ({ ...prev, expiredDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Currency</label>
+              <select disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.currency} onChange={e => setForm(prev => ({ ...prev, currency: e.target.value as QuotationCurrency }))}>
+                {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Remark</label>
+              <textarea disabled={!editable} rows={2} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.remark} onChange={e => setForm(prev => ({ ...prev, remark: e.target.value }))} />
+            </div>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="form-label mb-0">Detail — Product / Service</label>
+              {editable && <button type="button" onClick={addRow} className="btn-ghost text-xs">+ Add Row</button>}
+            </div>
+            <div className="space-y-2">
+              {details.map((d, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-start bg-white/5 rounded-xl p-2.5">
+                  <input type="text" placeholder="Product/Service *" disabled={!editable} className="input-field col-span-3 py-2 text-sm disabled:opacity-60"
+                    value={d.productService} onChange={e => updateRow(i, { productService: e.target.value })} />
+                  <input type="number" min="0" step="0.01" placeholder="Qty" disabled={!editable} className="input-field col-span-1 py-2 text-sm disabled:opacity-60"
+                    value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                  <input type="text" placeholder="Unit" disabled={!editable} className="input-field col-span-1 py-2 text-sm disabled:opacity-60"
+                    value={d.unit} onChange={e => updateRow(i, { unit: e.target.value })} />
+                  <input type="number" min="0" step="0.01" placeholder="Std Price" disabled={!editable} className="input-field col-span-2 py-2 text-sm disabled:opacity-60"
+                    value={d.standardPrice} onChange={e => updateRow(i, { standardPrice: Number(e.target.value) })} />
+                  <input type="number" min="0" step="0.01" placeholder="Unit Price" disabled={!editable} className="input-field col-span-2 py-2 text-sm disabled:opacity-60"
+                    value={d.unitPrice} onChange={e => updateRow(i, { unitPrice: Number(e.target.value) })} />
+                  <div className="col-span-2 py-2 text-sm text-slate-300 tabular-nums text-right pr-2">
+                    {((d.quantity || 0) * (d.unitPrice || 0)).toLocaleString('en-US')}
+                  </div>
+                  {editable && (
+                    <button type="button" onClick={() => removeRow(i)} disabled={details.length <= 1}
+                      className="col-span-1 p-2 text-slate-400 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed" title="Remove row">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end mt-3 text-sm">
+              <span className="text-slate-400 mr-2">Total Amount:</span>
+              <span className="text-white font-semibold tabular-nums">{totalAmount.toLocaleString('en-US')} {form.currency}</span>
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">{editable ? 'Cancel' : 'Close'}</button>
+            {editable && (
+              <button type="submit" disabled={saving} className="btn-primary flex-1">
+                {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> Save Changes</>}
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -166,7 +700,7 @@ export default function SalesDashboard() {
   const navigate         = useNavigate()
   const fileInputRef     = useRef<HTMLInputElement>(null)
 
-  const [activeTab, setActiveTab] = useState<'leads' | 'opportunities'>('leads')
+  const [activeTab, setActiveTab] = useState<'leads' | 'opportunities' | 'quotations'>('leads')
 
   // Lead state
   const [leads,       setLeads]       = useState<Lead[]>([])
@@ -176,14 +710,40 @@ export default function SalesDashboard() {
   const [modalOpen,   setModalOpen]   = useState(false)
   const [editLead,    setEditLead]    = useState<Lead | null>(null)
   const [importLoading, setImportLoading] = useState(false)
-  const [converting,  setConverting]  = useState<number | null>(null)
+  const [leadPage,     setLeadPage]     = useState(0)
+  const [leadPageSize, setLeadPageSize] = useState(20)
+  const [leadTotal,    setLeadTotal]    = useState(0)
+  const [salesReps,    setSalesReps]    = useState<SalesRep[]>([])
 
   // Opportunity state
   const [opps,      setOpps]      = useState<Opportunity[]>([])
   const [oppsLoading, setOppsLoading] = useState(false)
-  const [updatingOpp, setUpdatingOpp] = useState<number | null>(null)
+  const [oppSearch, setOppSearch] = useState('')
   const [oppModalOpen, setOppModalOpen] = useState(false)
   const [editOpp,   setEditOpp]   = useState<Opportunity | null>(null)
+  const [oppPage,     setOppPage]     = useState(0)
+  const [oppPageSize, setOppPageSize] = useState(20)
+  const [oppTotal,    setOppTotal]    = useState(0)
+  const [convertLeadTarget, setConvertLeadTarget] = useState<Lead | null>(null)
+  const [createQuoteForOpp, setCreateQuoteForOpp] = useState<Opportunity | null>(null)
+
+  // Quotation state
+  const [quotes,       setQuotes]       = useState<Quotation[]>([])
+  const [quotesLoading, setQuotesLoading] = useState(false)
+  const [quoteSearch,  setQuoteSearch]  = useState('')
+  const [quoteModalOpen, setQuoteModalOpen] = useState(false)
+  const [editQuote,    setEditQuote]    = useState<Quotation | null>(null)
+  const [quotePage,     setQuotePage]     = useState(0)
+  const [quotePageSize, setQuotePageSize] = useState(20)
+  const [quoteTotal,    setQuoteTotal]    = useState(0)
+
+  // Confirmation dialog (shared) — Delete Lead / Delete Opportunity / Delete Quotation (all danger tone)
+  const [confirmState, setConfirmState] = useState<
+    | { type: 'deleteLead'; lead: Lead }
+    | { type: 'deleteOpportunity'; opp: Opportunity }
+    | { type: 'deleteQuotation'; quote: Quotation }
+    | null
+  >(null)
 
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
 
@@ -196,8 +756,9 @@ export default function SalesDashboard() {
   const loadLeads = async () => {
     setLeadsLoading(true)
     try {
-      const res = await getLeads(search || undefined, statusFilter === 'ALL' ? undefined : statusFilter)
-      setLeads(res.data.data ?? [])
+      const res = await getLeads(search || undefined, statusFilter === 'ALL' ? undefined : statusFilter, leadPage, leadPageSize)
+      setLeads(res.data.data?.content ?? [])
+      setLeadTotal(res.data.data?.totalElements ?? 0)
     } catch { showToast('Failed to load leads', 'error') }
     finally  { setLeadsLoading(false) }
   }
@@ -205,14 +766,33 @@ export default function SalesDashboard() {
   const loadOpps = async () => {
     setOppsLoading(true)
     try {
-      const res = await getMyOpportunities()
-      setOpps(res.data.data ?? [])
+      const res = await getMyOpportunities(oppSearch || undefined, oppPage, oppPageSize)
+      setOpps(res.data.data?.content ?? [])
+      setOppTotal(res.data.data?.totalElements ?? 0)
     } catch { showToast('Failed to load opportunities', 'error') }
     finally  { setOppsLoading(false) }
   }
 
-  useEffect(() => { loadLeads() }, [search, statusFilter])
-  useEffect(() => { if (activeTab === 'opportunities') loadOpps() }, [activeTab])
+  const loadQuotes = async () => {
+    setQuotesLoading(true)
+    try {
+      const res = await getMyQuotations(quoteSearch || undefined, quotePage, quotePageSize)
+      setQuotes(res.data.data?.content ?? [])
+      setQuoteTotal(res.data.data?.totalElements ?? 0)
+    } catch { showToast('Failed to load quotations', 'error') }
+    finally  { setQuotesLoading(false) }
+  }
+
+  // Reset to page 0 whenever the search/filter changes (new result set)
+  useEffect(() => { setLeadPage(0) }, [search, statusFilter])
+  useEffect(() => { loadLeads() }, [search, statusFilter, leadPage, leadPageSize])
+  useEffect(() => { setOppPage(0) }, [oppSearch])
+  useEffect(() => { if (activeTab === 'opportunities') loadOpps() }, [activeTab, oppSearch, oppPage, oppPageSize])
+  useEffect(() => { setQuotePage(0) }, [quoteSearch])
+  useEffect(() => { if (activeTab === 'quotations') loadQuotes() }, [activeTab, quoteSearch, quotePage, quotePageSize])
+  useEffect(() => {
+    getSalesReps().then(res => setSalesReps(res.data.data ?? [])).catch(() => { /* dropdown just stays empty */ })
+  }, [])
 
   // ─── CRUD handlers ───────────────────────────────────────────
   const handleSaveLead = async (data: CreateLeadRequest) => {
@@ -228,26 +808,45 @@ export default function SalesDashboard() {
     loadLeads()
   }
 
-  const handleDelete = async (lead: Lead) => {
-    if (!confirm(`Delete lead "${lead.leadName}"? This action cannot be undone.`)) return
+  // Open confirmation — actual deletion happens in executeConfirmedAction below
+  const handleDelete = (lead: Lead) => setConfirmState({ type: 'deleteLead', lead })
+  const handleDeleteOpportunity = (opp: Opportunity) => setConfirmState({ type: 'deleteOpportunity', opp })
+  const handleDeleteQuotation = (quote: Quotation) => setConfirmState({ type: 'deleteQuotation', quote })
+  const handleConvert = (lead: Lead) => setConvertLeadTarget(lead)
+
+  const [confirmActionLoading, setConfirmActionLoading] = useState(false)
+
+  const executeConfirmedAction = async () => {
+    if (!confirmState) return
+    setConfirmActionLoading(true)
     try {
-      await deleteLead(lead.id)
-      showToast('Lead deleted')
-      loadLeads()
-    } catch { showToast('Failed to delete lead', 'error') }
+      if (confirmState.type === 'deleteLead') {
+        await deleteLead(confirmState.lead.id)
+        showToast('Lead deleted')
+        loadLeads()
+      } else if (confirmState.type === 'deleteOpportunity') {
+        await deleteOpportunity(confirmState.opp.id)
+        showToast('Opportunity deleted')
+        loadOpps()
+      } else {
+        await deleteQuotation(confirmState.quote.id)
+        showToast('Quotation deleted')
+        loadQuotes()
+      }
+      setConfirmState(null)
+    } catch (err: unknown) {
+      showToast(getApiErrorMessage(err, 'Delete failed'), 'error')
+    } finally {
+      setConfirmActionLoading(false)
+    }
   }
 
-  const handleConvert = async (lead: Lead) => {
-    if (!confirm(`Convert "${lead.leadName}" to an Opportunity? This lead will no longer appear in the Leads list.`)) return
-    setConverting(lead.id)
-    try {
-      await convertLead(lead.id)
-      showToast(`"${lead.leadName}" converted to Opportunity! Check the Opportunities tab.`)
-      loadLeads()
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-      showToast(msg ?? 'Conversion failed', 'error')
-    } finally { setConverting(null) }
+  const handleConvertSubmit = async (data: ConvertLeadRequest) => {
+    if (!convertLeadTarget) return
+    await convertLead(convertLeadTarget.id, data)
+    showToast(`"${convertLeadTarget.leadName}" converted to Opportunity! Check the Opportunities tab.`)
+    setConvertLeadTarget(null)
+    loadLeads()
   }
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -277,28 +876,47 @@ export default function SalesDashboard() {
     } catch { showToast('Download failed', 'error') }
   }
 
-  const handleSaveOpportunity = async (data: UpdateOpportunityDetailsRequest) => {
-    if (!editOpp) return
-    const res = await updateOpportunity(editOpp.id, data)
-    setOpps(prev => prev.map(o => o.id === editOpp.id ? res.data.data! : o))
-    showToast('Opportunity updated successfully')
+  const handleSaveOpportunity = async (data: CreateOpportunityRequest) => {
+    if (editOpp) {
+      await updateOpportunity(editOpp.id, data)
+      showToast('Opportunity updated successfully')
+    } else {
+      await createOpportunity(data)
+      showToast('Opportunity created successfully')
+    }
     setOppModalOpen(false)
     setEditOpp(null)
+    loadOpps()
   }
 
-  const handleOppStatus = async (opp: Opportunity, status: string) => {
-    setUpdatingOpp(opp.id)
+  const handleCreateQuotationSubmit = async (data: CreateQuotationFromOpportunityRequest) => {
+    if (!createQuoteForOpp) return
+    await createQuotationFromOpportunity(createQuoteForOpp.id, data)
+    showToast('Quotation created — check the Quotations tab')
+    setCreateQuoteForOpp(null)
+    loadOpps()
+  }
+
+  const handleSaveQuotation = async (data: UpdateQuotationRequest) => {
+    if (!editQuote) return
+    await updateQuotation(editQuote.id, data)
+    showToast('Quotation updated successfully')
+    setQuoteModalOpen(false)
+    setEditQuote(null)
+    loadQuotes()
+  }
+
+  const handleSendToNegotiation = async (quote: Quotation) => {
     try {
-      const res = await updateOpportunityStatus(opp.id, status)
-      setOpps(prev => prev.map(o => o.id === opp.id ? res.data.data! : o))
-      showToast('Status updated')
-    } catch { showToast('Failed to update status', 'error') }
-    finally { setUpdatingOpp(null) }
+      await createDealNegotiation(quote.id)
+      showToast(`${quote.quotationNo} moved to Sent — Deal Negotiation (SAL-004) isn't built yet.`)
+      loadQuotes()
+    } catch (err: unknown) {
+      showToast(getApiErrorMessage(err, 'Failed to send for negotiation'), 'error')
+    }
   }
 
   const handleLogout = () => { logout(); navigate('/login') }
-
-  const oppStatuses = ['NEW', 'IN_PROGRESS', 'WON', 'LOST']
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -348,7 +966,7 @@ export default function SalesDashboard() {
             Leads
             <span className={`text-xs px-1.5 py-0.5 rounded-full
               ${activeTab === 'leads' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
-              {leads.length}
+              {leadTotal}
             </span>
           </button>
           <button
@@ -362,7 +980,21 @@ export default function SalesDashboard() {
             Opportunities
             <span className={`text-xs px-1.5 py-0.5 rounded-full
               ${activeTab === 'opportunities' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
-              {opps.length}
+              {oppTotal}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('quotations')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
+              ${activeTab === 'quotations'
+                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+          >
+            <FileText className="w-4 h-4" />
+            Quotations
+            <span className={`text-xs px-1.5 py-0.5 rounded-full
+              ${activeTab === 'quotations' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
+              {quoteTotal}
             </span>
           </button>
         </div>
@@ -393,7 +1025,8 @@ export default function SalesDashboard() {
                 <option value="ALL">All Status</option>
                 <option value="NEW">New</option>
                 <option value="IN_PROGRESS">In Progress</option>
-                <option value="CLOSED">Closed</option>
+                <option value="QUALIFIED">Qualified</option>
+                <option value="REJECTED">Rejected</option>
               </select>
               <button onClick={loadLeads} className="btn-icon" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${leadsLoading ? 'animate-spin' : ''}`} />
@@ -418,7 +1051,7 @@ export default function SalesDashboard() {
                 onClick={() => { setEditLead(null); setModalOpen(true) }}
                 className="btn-primary gap-1.5 text-sm"
               >
-                <Plus className="w-4 h-4" /> Create Lead
+                <Plus className="w-4 h-4" /> Create or Add New
               </button>
             </div>
           </div>
@@ -429,19 +1062,20 @@ export default function SalesDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
-                    {['Lead ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Status', 'Actions'].map(h => (
-                      <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    {['Lead ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Sales Rep', 'Status', 'Actions'].map(h => (
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
+                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
                   {leadsLoading ? (
-                    <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                       Loading leads...
                     </td></tr>
                   ) : leads.length === 0 ? (
-                    <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
                       <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
                       No leads found. Create one or import from Excel.
                     </td></tr>
@@ -452,13 +1086,14 @@ export default function SalesDashboard() {
                       <td className="px-4 py-3.5 text-slate-300">{lead.companyName || '—'}</td>
                       <td className="px-4 py-3.5 text-slate-300">{lead.contactPerson || '—'}</td>
                       <td className="px-4 py-3.5 text-slate-300">{lead.phone || '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{lead.salesRepName || '—'}</td>
                       <td className="px-4 py-3.5">
                         <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${leadStatusColor[lead.status] ?? ''}`}>
                           {lead.status.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                        <div className="flex items-center gap-1">
                           <button onClick={() => { setEditLead(lead); setModalOpen(true) }}
                             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
                             <Edit2 className="w-3.5 h-3.5" />
@@ -469,14 +1104,11 @@ export default function SalesDashboard() {
                           </button>
                           <button
                             onClick={() => handleConvert(lead)}
-                            disabled={converting === lead.id || lead.status === 'CONVERTED'}
+                            disabled={lead.status === 'REJECTED'}
                             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Convert to Opportunity"
                           >
-                            {converting === lead.id
-                              ? <Loader2 className="w-3 h-3 animate-spin" />
-                              : <ArrowRightCircle className="w-3.5 h-3.5" />
-                            }
+                            <ArrowRightCircle className="w-3.5 h-3.5" />
                             Convert
                           </button>
                         </div>
@@ -486,11 +1118,11 @@ export default function SalesDashboard() {
                 </tbody>
               </table>
             </div>
-            {leads.length > 0 && (
-              <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-500">
-                {leads.length} lead{leads.length !== 1 ? 's' : ''} found
-              </div>
-            )}
+            <Pagination
+              page={leadPage} pageSize={leadPageSize} totalElements={leadTotal}
+              onPageChange={setLeadPage}
+              onPageSizeChange={size => { setLeadPageSize(size); setLeadPage(0) }}
+            />
           </div>
         </div>
       )}
@@ -498,13 +1130,27 @@ export default function SalesDashboard() {
       {/* ── OPPORTUNITY TAB ──────────────────────────────────────── */}
       {activeTab === 'opportunities' && (
         <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-white">My Opportunities</h2>
-              <p className="text-sm text-slate-400 mt-0.5">Leads you have converted — assigned to you</p>
+          <div className="flex flex-wrap gap-3 items-center justify-between">
+            <div className="flex flex-wrap gap-3 flex-1">
+              <div className="relative flex-1 min-w-[220px] max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search Opp No, name, customer..."
+                  className="input-field pl-9 py-2.5"
+                  value={oppSearch}
+                  onChange={e => setOppSearch(e.target.value)}
+                />
+              </div>
+              <button onClick={loadOpps} className="btn-icon" title="Refresh">
+                <RefreshCw className={`w-4 h-4 ${oppsLoading ? 'animate-spin' : ''}`} />
+              </button>
             </div>
-            <button onClick={loadOpps} className="btn-icon" title="Refresh">
-              <RefreshCw className={`w-4 h-4 ${oppsLoading ? 'animate-spin' : ''}`} />
+            <button
+              onClick={() => { setEditOpp(null); setOppModalOpen(true) }}
+              className="btn-primary gap-1.5 text-sm"
+            >
+              <Plus className="w-4 h-4" /> Create Opportunity
             </button>
           </div>
 
@@ -513,8 +1159,9 @@ export default function SalesDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
-                    {['Opp ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Status', 'Converted On', 'Actions'].map(h => (
-                      <th key={h} className="px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    {['Opp ID', 'Name', 'Customer', 'Sales Rep', 'Stage', 'Expected Revenue', 'Status', 'Actions'].map(h => (
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
+                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -527,48 +1174,49 @@ export default function SalesDashboard() {
                   ) : opps.length === 0 ? (
                     <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
                       <Briefcase className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                      No opportunities yet. Convert a lead to get started!
+                      No opportunities yet. Create one or convert a Lead to get started!
                     </td></tr>
                   ) : opps.map(opp => (
                     <tr key={opp.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{opp.opportunityId}</td>
-                      <td className="px-4 py-3.5 font-medium text-white">{opp.leadName}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{opp.companyName || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{opp.contactPerson || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{opp.phone || '—'}</td>
+                      <td className="px-4 py-3.5 font-medium text-white">{opp.opportunityName}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{opp.customer}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{opp.salesRepName || '—'}</td>
                       <td className="px-4 py-3.5">
-                        <div className="relative group/status">
-                          <button className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-all
-                            ${oppStatusColor[opp.status] ?? ''} hover:brightness-125`}>
-                            {updatingOpp === opp.id ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                            {opp.status.replace('_', ' ')}
-                            <ChevronDown className="w-3 h-3" />
-                          </button>
-                          {/* Dropdown */}
-                          <div className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-700 rounded-xl shadow-xl z-10
-                            opacity-0 invisible group-hover/status:opacity-100 group-hover/status:visible transition-all py-1 min-w-[130px]">
-                            {oppStatuses.map(s => (
-                              <button
-                                key={s}
-                                onClick={() => handleOppStatus(opp, s)}
-                                disabled={s === opp.status || updatingOpp === opp.id}
-                                className={`w-full text-left px-3 py-2 text-xs hover:bg-slate-700 transition-colors
-                                  ${s === opp.status ? 'text-brand-400 font-semibold' : 'text-slate-300'}`}
-                              >
-                                {s.replace('_', ' ')}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
+                        <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${stageColor[opp.stage] ?? ''}`}>
+                          {opp.stage.replace('_', ' ')}
+                        </span>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-400 text-xs">
-                        {new Date(opp.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      <td className="px-4 py-3.5 text-slate-300 tabular-nums">
+                        {opp.expectedRevenue.toLocaleString('en-US')}
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${lifecycleStatusColor[opp.lifecycleStatus] ?? ''}`}>
+                          {opp.lifecycleStatus}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                        <div className="flex items-center gap-1">
                           <button onClick={() => { setEditOpp(opp); setOppModalOpen(true) }}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
+                            disabled={opp.hasQuotation}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={opp.hasQuotation ? 'Already converted to Quotation — locked' : 'Edit'}>
                             <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => handleDeleteOpportunity(opp)}
+                            disabled={opp.hasQuotation}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={opp.hasQuotation ? 'Already converted to Quotation — locked' : 'Delete'}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => setCreateQuoteForOpp(opp)}
+                            disabled={opp.hasQuotation}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={opp.hasQuotation ? 'Already has a Quotation' : 'Create Quotation'}
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            Quote
                           </button>
                         </div>
                       </td>
@@ -577,11 +1225,114 @@ export default function SalesDashboard() {
                 </tbody>
               </table>
             </div>
-            {opps.length > 0 && (
-              <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-500">
-                {opps.length} opportunit{opps.length !== 1 ? 'ies' : 'y'}
+            <Pagination
+              page={oppPage} pageSize={oppPageSize} totalElements={oppTotal}
+              onPageChange={setOppPage}
+              onPageSizeChange={size => { setOppPageSize(size); setOppPage(0) }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── QUOTATION TAB ────────────────────────────────────────── */}
+      {activeTab === 'quotations' && (
+        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+          <div className="flex flex-wrap gap-3 items-center justify-between">
+            <div className="flex flex-wrap gap-3 flex-1">
+              <div className="relative flex-1 min-w-[220px] max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search Quotation No, customer..."
+                  className="input-field pl-9 py-2.5"
+                  value={quoteSearch}
+                  onChange={e => setQuoteSearch(e.target.value)}
+                />
               </div>
-            )}
+              <button onClick={loadQuotes} className="btn-icon" title="Refresh">
+                <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 max-w-xs text-right">
+              Quotations can only be created from an Opportunity (see the "Quote" action in the Opportunities tab).
+            </p>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-800/50">
+                    {['Quotation No', 'Opportunity', 'Customer', 'Quotation Date', 'Expired Date', 'Total Amount', 'Status', 'Actions'].map(h => (
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
+                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                  {quotesLoading ? (
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+                      Loading quotations...
+                    </td></tr>
+                  ) : quotes.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                      <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                      No quotations yet. Create one from an Opportunity.
+                    </td></tr>
+                  ) : quotes.map(quote => (
+                    <tr key={quote.id} className="hover:bg-slate-800/40 transition-colors group">
+                      <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{quote.quotationNo}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{quote.opportunityName || '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{quote.customer}</td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">
+                        {new Date(quote.quotationDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">
+                        {new Date(quote.expiredDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-300 tabular-nums">
+                        {quote.totalAmount.toLocaleString('en-US')} {quote.currency}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${quotationStatusColor[quote.status] ?? ''}`}>
+                          {quote.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => { setEditQuote(quote); setQuoteModalOpen(true) }}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                            title={quote.status === 'DRAFT' ? 'Edit' : 'View'}>
+                            {quote.status === 'DRAFT' ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <button onClick={() => handleDeleteQuotation(quote)}
+                            disabled={quote.status !== 'DRAFT'}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={quote.status !== 'DRAFT' ? 'Only a Draft quotation can be deleted' : 'Delete'}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleSendToNegotiation(quote)}
+                            disabled={quote.status !== 'DRAFT'}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Create Deal Negotiation"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            Negotiate
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              page={quotePage} pageSize={quotePageSize} totalElements={quoteTotal}
+              onPageChange={setQuotePage}
+              onPageSizeChange={size => { setQuotePageSize(size); setQuotePage(0) }}
+            />
           </div>
         </div>
       )}
@@ -590,19 +1341,73 @@ export default function SalesDashboard() {
       {modalOpen && (
         <LeadModal
           initial={editLead}
+          salesReps={salesReps}
           onSave={handleSaveLead}
           onClose={() => { setModalOpen(false); setEditLead(null) }}
         />
       )}
 
-      {/* Opportunity Edit Modal */}
-      {oppModalOpen && editOpp && (
+      {/* Opportunity Create/Edit Modal */}
+      {oppModalOpen && (
         <OpportunityModal
           initial={editOpp}
+          salesReps={salesReps}
           onSave={handleSaveOpportunity}
           onClose={() => { setOppModalOpen(false); setEditOpp(null) }}
         />
       )}
+
+      {/* Convert Lead -> Opportunity Modal */}
+      {convertLeadTarget && (
+        <ConvertLeadModal
+          lead={convertLeadTarget}
+          salesReps={salesReps}
+          onConvert={handleConvertSubmit}
+          onClose={() => setConvertLeadTarget(null)}
+        />
+      )}
+
+      {/* Create Quotation Modal (from an Opportunity row) */}
+      {createQuoteForOpp && (
+        <CreateQuotationModal
+          opportunity={createQuoteForOpp}
+          onCreate={handleCreateQuotationSubmit}
+          onClose={() => setCreateQuoteForOpp(null)}
+        />
+      )}
+
+      {/* Quotation View/Edit Modal */}
+      {quoteModalOpen && editQuote && (
+        <QuotationModal
+          initial={editQuote}
+          onSave={handleSaveQuotation}
+          onClose={() => { setQuoteModalOpen(false); setEditQuote(null) }}
+        />
+      )}
+
+      {/* Shared confirmation dialog — Delete Lead / Delete Opportunity / Delete Quotation (all danger) */}
+      <ConfirmDialog
+        open={!!confirmState}
+        tone="danger"
+        title={
+          confirmState?.type === 'deleteLead' ? 'Delete Lead'
+          : confirmState?.type === 'deleteOpportunity' ? 'Delete Opportunity'
+          : 'Delete Quotation'
+        }
+        message={
+          confirmState?.type === 'deleteLead'
+            ? `Delete lead "${confirmState.lead.leadName}"? This action cannot be undone.`
+            : confirmState?.type === 'deleteOpportunity'
+              ? `Delete opportunity "${confirmState.opp.opportunityName}"? This action cannot be undone.`
+              : confirmState?.type === 'deleteQuotation'
+                ? `Delete quotation "${confirmState.quote.quotationNo}"? This action cannot be undone.`
+                : ''
+        }
+        confirmLabel="Delete"
+        loading={confirmActionLoading}
+        onConfirm={executeConfirmedAction}
+        onCancel={() => setConfirmState(null)}
+      />
     </div>
   )
 }
