@@ -164,6 +164,94 @@ export interface UpdateQuotationRequest {
   details: QuotationDetailRequest[]
 }
 
+// ─── Deal Negotiation (SAL-004) ─────────────────────────────────
+export const COMMUNICATION_CHANNELS = ['Phone Call', 'Email', 'Meeting', 'Video Call'] as const
+export type CommunicationChannel = typeof COMMUNICATION_CHANNELS[number]
+export type DealNegotiationStatus = 'NEGOTIATING' | 'WON' | 'LOST'
+
+export interface DealNegotiationHistoryEntry {
+  id: number
+  discussionDate: string
+  updatedByName: string | null
+  discussion: string
+  customerFeedback: string | null
+  nextAction: string | null
+  nextFollowUpDate: string | null
+}
+
+export interface DealNegotiation {
+  id: number
+  negotiationNo: string
+  quotationId: number
+  quotationNo: string | null
+  opportunityId: number
+  opportunityName: string | null
+  customer: string
+  salesRepId: number
+  salesRepName: string | null
+  meetingDate: string
+  communicationChannel: string
+  contactPerson: string | null
+  internalNote: string | null
+  status: DealNegotiationStatus
+  dealAmount: number | null
+  history: DealNegotiationHistoryEntry[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateDealNegotiationRequest {
+  meetingDate: string
+  communicationChannel: string
+  contactPerson?: string
+  internalNote?: string
+  discussion: string
+  customerFeedback?: string
+  nextAction?: string
+  nextFollowUpDate?: string
+}
+
+export interface UpdateDealNegotiationRequest {
+  meetingDate: string
+  communicationChannel: string
+  contactPerson?: string
+  internalNote?: string
+}
+
+export interface AddNegotiationHistoryRequest {
+  discussion: string
+  customerFeedback?: string
+  nextAction?: string
+  nextFollowUpDate?: string
+}
+
+// ─── Deal Won/Lost (SAL-005) ─────────────────────────────────────
+export type DealResultType = 'WON' | 'LOST'
+
+export interface DealResult {
+  id: number
+  dealNegotiationId: number
+  negotiationNo: string | null
+  quotationId: number
+  quotationNo: string | null
+  opportunityId: number
+  opportunityName: string | null
+  customer: string
+  salesRepId: number
+  salesRepName: string | null
+  dealAmount: number
+  result: DealResultType
+  comment: string | null
+  decisionByName: string | null
+  decisionDate: string
+  createdAt: string
+}
+
+export interface CreateDealResultRequest {
+  result: DealResultType
+  comment?: string
+}
+
 // ─── Register ─────────────────────────────────────────────────
 export const register = (data: RegisterRequest) =>
   api.post<ApiResponse<LoginResponse>>('/auth/register', data)
@@ -235,5 +323,28 @@ export const updateQuotation = (id: number, data: UpdateQuotationRequest) =>
 export const deleteQuotation = (id: number) =>
   api.delete<ApiResponse<null>>(`/quotations/${id}`)
 
-export const createDealNegotiation = (id: number) =>
-  api.post<ApiResponse<Quotation>>(`/quotations/${id}/deal-negotiation`)
+export const createDealNegotiation = (id: number, data: CreateDealNegotiationRequest) =>
+  api.post<ApiResponse<DealNegotiation>>(`/quotations/${id}/deal-negotiation`, data)
+
+// ─── Deal Negotiations (SAL-004) ─────────────────────────────────
+export const getMyDealNegotiations = (search?: string, meetingDateFrom?: string, meetingDateTo?: string, page = 0, size = 10) =>
+  api.get<ApiResponse<PageResponse<DealNegotiation>>>('/deal-negotiations', { params: { search, meetingDateFrom, meetingDateTo, page, size } })
+
+export const getDealNegotiation = (id: number) =>
+  api.get<ApiResponse<DealNegotiation>>(`/deal-negotiations/${id}`)
+
+export const updateDealNegotiation = (id: number, data: UpdateDealNegotiationRequest) =>
+  api.put<ApiResponse<DealNegotiation>>(`/deal-negotiations/${id}`, data)
+
+export const addNegotiationHistory = (id: number, data: AddNegotiationHistoryRequest) =>
+  api.post<ApiResponse<DealNegotiation>>(`/deal-negotiations/${id}/history`, data)
+
+// ─── Deal Results / Deal Won-Lost (SAL-005) ──────────────────────
+export const createDealResult = (dealNegotiationId: number, data: CreateDealResultRequest) =>
+  api.post<ApiResponse<DealResult>>(`/deal-negotiations/${dealNegotiationId}/deal-result`, data)
+
+export const getMyDealResults = (search?: string, result?: string, page = 0, size = 10) =>
+  api.get<ApiResponse<PageResponse<DealResult>>>('/deal-results', { params: { search, result, page, size } })
+
+export const getDealResult = (id: number) =>
+  api.get<ApiResponse<DealResult>>(`/deal-results/${id}`)

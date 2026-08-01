@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import {
   Search, Plus, Upload, Download, RefreshCw,
   Trash2, Edit2, ArrowRightCircle, Eye, Send,
-  LogOut, User, Briefcase, Users, TrendingUp, FileText, X, Check, Loader2
+  LogOut, User, Briefcase, Users, TrendingUp, FileText, X, Check, Loader2,
+  Handshake, Trophy, History, ThumbsUp, ThumbsDown,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { getApiErrorMessage } from '@/api/axios'
@@ -14,6 +15,8 @@ import {
   importLeadsExcel, downloadLeadTemplate, getSalesReps,
   getMyOpportunities, createOpportunity, updateOpportunity, deleteOpportunity,
   getMyQuotations, createQuotationFromOpportunity, updateQuotation, deleteQuotation, createDealNegotiation,
+  getMyDealNegotiations, getDealNegotiation, updateDealNegotiation, addNegotiationHistory,
+  createDealResult, getMyDealResults,
 } from '@/api/sales'
 import type {
   Lead, Opportunity, OpportunityStage, OpportunityDetailRequest,
@@ -21,7 +24,10 @@ import type {
   Quotation, QuotationCurrency, QuotationStatus, QuotationDetailRequest,
   CreateQuotationFromOpportunityRequest, UpdateQuotationRequest,
   SalesRep, LeadSource,
+  DealNegotiation, CreateDealNegotiationRequest, UpdateDealNegotiationRequest, AddNegotiationHistoryRequest,
+  DealResult, DealResultType, CreateDealResultRequest,
 } from '@/api/sales'
+import { COMMUNICATION_CHANNELS } from '@/api/sales'
 
 const LEAD_SOURCES: LeadSource[] = ['New Client', 'Existing Client', 'Referral', 'Digital Lead']
 const PROJECT_TYPES = ['Agency', 'Label', 'Others'] as const
@@ -29,6 +35,7 @@ const OPPORTUNITY_STAGES: OpportunityStage[] =
   ['PROSPECTING', 'QUALIFICATION', 'PROPOSAL', 'NEGOTIATION', 'CLOSED_WON', 'CLOSED_LOST']
 const CURRENCIES: QuotationCurrency[] = ['VND', 'USD']
 const QUOTATION_STATUSES: QuotationStatus[] = ['DRAFT', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED']
+const DEAL_RESULTS: DealResultType[] = ['WON', 'LOST']
 
 // ─── Status badge colours ──────────────────────────────────────
 const leadStatusColor: Record<string, string> = {
@@ -56,6 +63,15 @@ const quotationStatusColor: Record<string, string> = {
   ACCEPTED: 'bg-green-500/20 text-green-300 border-green-500/30',
   REJECTED: 'bg-red-500/20 text-red-300 border-red-500/30',
   EXPIRED:  'bg-orange-500/20 text-orange-300 border-orange-500/30',
+}
+const negotiationStatusColor: Record<string, string> = {
+  NEGOTIATING: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
+  WON:         'bg-green-500/20 text-green-300 border-green-500/30',
+  LOST:        'bg-red-500/20 text-red-300 border-red-500/30',
+}
+const dealResultColor: Record<string, string> = {
+  WON:  'bg-green-500/20 text-green-300 border-green-500/30',
+  LOST: 'bg-red-500/20 text-red-300 border-red-500/30',
 }
 
 // ─── Lead Form Modal ───────────────────────────────────────────
@@ -695,13 +711,423 @@ function QuotationModal({
   )
 }
 
+// ─── Create Deal Negotiation Modal (from a Quotation row, SAL-004 BR-001) ───
+function CreateDealNegotiationModal({
+  quote, onCreate, onClose,
+}: {
+  quote: Quotation
+  onCreate: (data: CreateDealNegotiationRequest) => Promise<void>
+  onClose: () => void
+}) {
+  const [form, setForm] = useState<CreateDealNegotiationRequest>({
+    meetingDate: new Date().toISOString().slice(0, 10),
+    communicationChannel: COMMUNICATION_CHANNELS[0],
+    contactPerson: '',
+    internalNote: '',
+    discussion: '',
+    customerFeedback: '',
+    nextAction: '',
+    nextFollowUpDate: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.meetingDate)             { setError('Meeting Date is required'); return }
+    if (!form.communicationChannel)    { setError('Communication Channel is required'); return }
+    if (!form.discussion.trim())       { setError('Discussion is required'); return }
+    if (form.nextFollowUpDate && form.nextFollowUpDate < form.meetingDate) {
+      setError('Next Follow-up Date must be on or after Meeting Date'); return
+    }
+    setSaving(true)
+    try {
+      await onCreate({ ...form, nextFollowUpDate: form.nextFollowUpDate || undefined })
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to create Deal Negotiation'))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">Create Deal Negotiation — {quote.quotationNo}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-4">
+          {error && <div className="alert-error">{error}</div>}
+          <p className="text-sm text-slate-400">
+            Customer, Opportunity and Sales Rep are inherited from this Quotation. The Quotation moves to Sent once created.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="form-label">Meeting Date *</label>
+              <input type="date" className="input-field" value={form.meetingDate}
+                onChange={e => setForm(prev => ({ ...prev, meetingDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Communication Channel *</label>
+              <select className="input-field" value={form.communicationChannel}
+                onChange={e => setForm(prev => ({ ...prev, communicationChannel: e.target.value }))}>
+                {COMMUNICATION_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Contact Person</label>
+              <input type="text" className="input-field" placeholder="Customer-side contact" value={form.contactPerson}
+                onChange={e => setForm(prev => ({ ...prev, contactPerson: e.target.value }))} />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Internal Note</label>
+              <textarea className="input-field" rows={2} value={form.internalNote}
+                onChange={e => setForm(prev => ({ ...prev, internalNote: e.target.value }))} />
+            </div>
+          </div>
+
+          <div className="border-t border-slate-700 pt-4 space-y-3">
+            <label className="form-label mb-0">Initial Negotiation History</label>
+            <div>
+              <label className="form-label">Discussion *</label>
+              <textarea className="input-field" rows={2} placeholder="What was discussed with the customer?" value={form.discussion}
+                onChange={e => setForm(prev => ({ ...prev, discussion: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Customer Feedback</label>
+              <textarea className="input-field" rows={2} value={form.customerFeedback}
+                onChange={e => setForm(prev => ({ ...prev, customerFeedback: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="form-label">Next Action</label>
+                <input type="text" className="input-field" value={form.nextAction}
+                  onChange={e => setForm(prev => ({ ...prev, nextAction: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Next Follow-up Date</label>
+                <input type="date" className="input-field" value={form.nextFollowUpDate}
+                  onChange={e => setForm(prev => ({ ...prev, nextFollowUpDate: e.target.value }))} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating...</> : <><Handshake className="w-4 h-4" /> Create Deal Negotiation</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Deal Negotiation View/Edit Modal (SAL-004) ─────────────────
+function DealNegotiationModal({
+  initial, onSaveHeader, onAddHistory, onComplete, onClose,
+}: {
+  initial: DealNegotiation
+  onSaveHeader: (data: UpdateDealNegotiationRequest) => Promise<void>
+  onAddHistory: (data: AddNegotiationHistoryRequest) => Promise<void>
+  onComplete: () => void
+  onClose: () => void
+}) {
+  const editable = initial.status === 'NEGOTIATING'
+  const [form, setForm] = useState({
+    meetingDate: initial.meetingDate,
+    communicationChannel: initial.communicationChannel,
+    contactPerson: initial.contactPerson ?? '',
+    internalNote: initial.internalNote ?? '',
+  })
+  const [newHistory, setNewHistory] = useState({ discussion: '', customerFeedback: '', nextAction: '', nextFollowUpDate: '' })
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!form.meetingDate)          { setError('Meeting Date is required'); return }
+    if (!form.communicationChannel) { setError('Communication Channel is required'); return }
+    if (newHistory.nextFollowUpDate && newHistory.nextFollowUpDate < form.meetingDate) {
+      setError('Next Follow-up Date must be on or after Meeting Date'); return
+    }
+    setSaving(true)
+    try {
+      await onSaveHeader(form)
+      if (newHistory.discussion.trim()) {
+        await onAddHistory({ ...newHistory, nextFollowUpDate: newHistory.nextFollowUpDate || undefined })
+      }
+      setNewHistory({ discussion: '', customerFeedback: '', nextAction: '', nextFollowUpDate: '' })
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Save failed'))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">
+            {editable ? 'Edit' : 'View'} Deal Negotiation — {initial.negotiationNo}
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-5">
+          {error && <div className="alert-error">{error}</div>}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="form-label">Quotation</label>
+              <input disabled value={initial.quotationNo ?? '—'} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div><label className="form-label">Opportunity</label>
+              <input disabled value={initial.opportunityName ?? '—'} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div><label className="form-label">Customer</label>
+              <input disabled value={initial.customer} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div><label className="form-label">Sales Rep</label>
+              <input disabled value={initial.salesRepName ?? '—'} className="input-field opacity-60 cursor-not-allowed" /></div>
+            <div>
+              <label className="form-label">Meeting Date *</label>
+              <input type="date" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.meetingDate} onChange={e => setForm(prev => ({ ...prev, meetingDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Communication Channel *</label>
+              <select disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.communicationChannel} onChange={e => setForm(prev => ({ ...prev, communicationChannel: e.target.value }))}>
+                {COMMUNICATION_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+                {!COMMUNICATION_CHANNELS.includes(form.communicationChannel as typeof COMMUNICATION_CHANNELS[number]) &&
+                  <option value={form.communicationChannel}>{form.communicationChannel}</option>}
+              </select>
+            </div>
+            <div>
+              <label className="form-label">Contact Person</label>
+              <input type="text" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.contactPerson} onChange={e => setForm(prev => ({ ...prev, contactPerson: e.target.value }))} />
+            </div>
+            <div>
+              <label className="form-label">Status</label>
+              <input disabled value={initial.status} className="input-field opacity-60 cursor-not-allowed" />
+            </div>
+            <div className="col-span-2">
+              <label className="form-label">Internal Note</label>
+              <textarea disabled={!editable} rows={2} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                value={form.internalNote} onChange={e => setForm(prev => ({ ...prev, internalNote: e.target.value }))} />
+            </div>
+          </div>
+
+          <div>
+            <label className="form-label mb-2 flex items-center gap-1.5"><History className="w-3.5 h-3.5" /> Negotiation Timeline</label>
+            <div className="space-y-2 max-h-56 overflow-y-auto">
+              {initial.history.length === 0 ? (
+                <p className="text-sm text-slate-500">No negotiation history yet.</p>
+              ) : initial.history.map(h => (
+                <div key={h.id} className="bg-white/5 rounded-xl p-3 text-sm">
+                  <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                    <span>{new Date(h.discussionDate).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    <span>{h.updatedByName ?? '—'}</span>
+                  </div>
+                  <p className="text-slate-200">{h.discussion}</p>
+                  {h.customerFeedback && <p className="text-slate-400 mt-1">Feedback: {h.customerFeedback}</p>}
+                  {h.nextAction && <p className="text-slate-400 mt-1">Next: {h.nextAction}{h.nextFollowUpDate ? ` (by ${h.nextFollowUpDate})` : ''}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {editable && (
+            <div className="border-t border-slate-700 pt-4 space-y-3">
+              <label className="form-label mb-0">Add Negotiation History</label>
+              <div>
+                <label className="form-label">Discussion</label>
+                <textarea className="input-field" rows={2} placeholder="Leave blank to skip adding a new history entry" value={newHistory.discussion}
+                  onChange={e => setNewHistory(prev => ({ ...prev, discussion: e.target.value }))} />
+              </div>
+              <div>
+                <label className="form-label">Customer Feedback</label>
+                <textarea className="input-field" rows={2} value={newHistory.customerFeedback}
+                  onChange={e => setNewHistory(prev => ({ ...prev, customerFeedback: e.target.value }))} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="form-label">Next Action</label>
+                  <input type="text" className="input-field" value={newHistory.nextAction}
+                    onChange={e => setNewHistory(prev => ({ ...prev, nextAction: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="form-label">Next Follow-up Date</label>
+                  <input type="date" className="input-field" value={newHistory.nextFollowUpDate}
+                    onChange={e => setNewHistory(prev => ({ ...prev, nextFollowUpDate: e.target.value }))} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">{editable ? 'Cancel' : 'Close'}</button>
+            {editable && (
+              <>
+                <button type="submit" disabled={saving} className="btn-secondary flex-1">
+                  {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> Save</>}
+                </button>
+                <button type="button" onClick={onComplete} disabled={saving} className="btn-primary flex-1">
+                  <Trophy className="w-4 h-4" /> Complete Negotiation
+                </button>
+              </>
+            )}
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ─── Deal Won/Lost Modal (SAL-005, "Complete Negotiation") ──────
+function DealResultModal({
+  negotiation, onSave, onClose,
+}: {
+  negotiation: DealNegotiation
+  onSave: (data: CreateDealResultRequest) => Promise<void>
+  onClose: () => void
+}) {
+  const [result,  setResult]  = useState<DealResultType | ''>('')
+  const [comment, setComment] = useState('')
+  const [confirming, setConfirming] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error,  setError]  = useState('')
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!result) { setError('Select Won or Lost before saving'); return }
+    setError('')
+    setConfirming(true)
+  }
+
+  const confirmSave = async () => {
+    if (!result) return
+    setSaving(true)
+    try {
+      await onSave({ result, comment: comment || undefined })
+    } catch (err: unknown) {
+      setError(getApiErrorMessage(err, 'Failed to record Deal Result'))
+      setConfirming(false)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">Deal Won / Lost — {negotiation.negotiationNo}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+
+        {confirming ? (
+          <div className="p-6 space-y-5">
+            <p className="text-slate-200">
+              Confirm marking deal <span className="font-semibold">{negotiation.negotiationNo}</span> as{' '}
+              <span className={result === 'WON' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>{result}</span>?
+            </p>
+            <p className="text-sm text-slate-400">
+              {result === 'WON'
+                ? 'This will set the Opportunity to Closed Won and the Quotation to Accepted.'
+                : 'This will set the Opportunity to Closed Lost and the Quotation to Rejected.'} This cannot be changed afterwards.
+            </p>
+            {error && <div className="alert-error">{error}</div>}
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setConfirming(false)} disabled={saving} className="btn-secondary flex-1">No, go back</button>
+              <button type="button" onClick={confirmSave} disabled={saving} className="btn-primary flex-1">
+                {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> Yes, confirm</>}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={submit} className="p-6 space-y-5">
+            {error && <div className="alert-error">{error}</div>}
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div><span className="text-slate-500">Quotation</span><p className="text-slate-200">{negotiation.quotationNo}</p></div>
+              <div><span className="text-slate-500">Opportunity</span><p className="text-slate-200">{negotiation.opportunityName}</p></div>
+              <div><span className="text-slate-500">Customer</span><p className="text-slate-200">{negotiation.customer}</p></div>
+              <div><span className="text-slate-500">Sales Rep</span><p className="text-slate-200">{negotiation.salesRepName}</p></div>
+              <div className="col-span-2"><span className="text-slate-500">Deal Amount</span>
+                <p className="text-white font-semibold tabular-nums">{(negotiation.dealAmount ?? 0).toLocaleString('en-US')}</p></div>
+            </div>
+
+            <div>
+              <label className="form-label">Deal Result *</label>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setResult('WON')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-medium transition-all
+                    ${result === 'WON' ? 'bg-green-500/20 text-green-300 border-green-500/40' : 'bg-white/5 text-slate-400 border-slate-700 hover:border-slate-600'}`}>
+                  <ThumbsUp className="w-4 h-4" /> Won
+                </button>
+                <button type="button" onClick={() => setResult('LOST')}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-medium transition-all
+                    ${result === 'LOST' ? 'bg-red-500/20 text-red-300 border-red-500/40' : 'bg-white/5 text-slate-400 border-slate-700 hover:border-slate-600'}`}>
+                  <ThumbsDown className="w-4 h-4" /> Lost
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="form-label">Comment</label>
+              <textarea className="input-field" rows={3} maxLength={1000} placeholder="Optional notes about the final decision..."
+                value={comment} onChange={e => setComment(e.target.value)} />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+              <button type="submit" className="btn-primary flex-1"><Check className="w-4 h-4" /> Save</button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Deal Result View Modal (read-only, SAL-005 View Screen) ────
+function DealResultViewModal({ result, onClose }: { result: DealResult; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-700">
+          <h3 className="text-lg font-semibold text-white">View Deal Result — {result.negotiationNo}</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div><span className="text-slate-500">Quotation</span><p className="text-slate-200">{result.quotationNo}</p></div>
+            <div><span className="text-slate-500">Opportunity</span><p className="text-slate-200">{result.opportunityName}</p></div>
+            <div><span className="text-slate-500">Customer</span><p className="text-slate-200">{result.customer}</p></div>
+            <div><span className="text-slate-500">Sales Rep</span><p className="text-slate-200">{result.salesRepName}</p></div>
+            <div><span className="text-slate-500">Deal Amount</span><p className="text-white font-semibold tabular-nums">{result.dealAmount.toLocaleString('en-US')}</p></div>
+            <div><span className="text-slate-500">Deal Result</span>
+              <p><span className={`text-xs font-medium px-2 py-1 rounded-lg border ${dealResultColor[result.result]}`}>{result.result}</span></p></div>
+          </div>
+          {result.comment && (
+            <div>
+              <span className="text-slate-500 text-sm">Comment</span>
+              <p className="text-slate-200 text-sm mt-1">{result.comment}</p>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3 text-sm border-t border-slate-700 pt-4">
+            <div><span className="text-slate-500">Decision By</span><p className="text-slate-200">{result.decisionByName ?? '—'}</p></div>
+            <div><span className="text-slate-500">Decision Date</span>
+              <p className="text-slate-200">{new Date(result.decisionDate).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p></div>
+          </div>
+          <button type="button" onClick={onClose} className="btn-secondary w-full">Close</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Main Sales Dashboard ──────────────────────────────────────
 export default function SalesDashboard() {
   const { user, logout } = useAuthStore()
   const navigate         = useNavigate()
   const fileInputRef     = useRef<HTMLInputElement>(null)
 
-  const [activeTab, setActiveTab] = useState<'leads' | 'opportunities' | 'quotations'>('leads')
+  const [activeTab, setActiveTab] = useState<'leads' | 'opportunities' | 'quotations' | 'negotiations' | 'dealResults'>('leads')
 
   // Lead state
   const [leads,       setLeads]       = useState<Lead[]>([])
@@ -739,6 +1165,29 @@ export default function SalesDashboard() {
   const [quotePage,     setQuotePage]     = useState(0)
   const [quotePageSize, setQuotePageSize] = useState(10)
   const [quoteTotal,    setQuoteTotal]    = useState(0)
+  const [negotiateForQuote, setNegotiateForQuote] = useState<Quotation | null>(null)
+
+  // Deal Negotiation state (SAL-004)
+  const [negotiations,       setNegotiations]       = useState<DealNegotiation[]>([])
+  const [negotiationsLoading, setNegotiationsLoading] = useState(false)
+  const [negSearch,  setNegSearch]  = useState('')
+  const [negMeetingFrom, setNegMeetingFrom] = useState('')
+  const [negMeetingTo,   setNegMeetingTo]   = useState('')
+  const [negPage,     setNegPage]     = useState(0)
+  const [negPageSize, setNegPageSize] = useState(10)
+  const [negTotal,    setNegTotal]    = useState(0)
+  const [viewNegotiation, setViewNegotiation] = useState<DealNegotiation | null>(null)
+  const [completeNegotiationTarget, setCompleteNegotiationTarget] = useState<DealNegotiation | null>(null)
+
+  // Deal Won/Lost state (SAL-005)
+  const [dealResults,       setDealResults]       = useState<DealResult[]>([])
+  const [dealResultsLoading, setDealResultsLoading] = useState(false)
+  const [resultSearch, setResultSearch] = useState('')
+  const [resultFilter, setResultFilter] = useState('ALL')
+  const [resultPage,     setResultPage]     = useState(0)
+  const [resultPageSize, setResultPageSize] = useState(10)
+  const [resultTotal,    setResultTotal]    = useState(0)
+  const [viewDealResult, setViewDealResult] = useState<DealResult | null>(null)
 
   // Confirmation dialog (shared) — Delete Lead / Delete Opportunity / Delete Quotation (all danger tone)
   const [confirmState, setConfirmState] = useState<
@@ -791,6 +1240,26 @@ export default function SalesDashboard() {
     finally  { setQuotesLoading(false) }
   }
 
+  const loadNegotiations = async () => {
+    setNegotiationsLoading(true)
+    try {
+      const res = await getMyDealNegotiations(negSearch || undefined, negMeetingFrom || undefined, negMeetingTo || undefined, negPage, negPageSize)
+      setNegotiations(res.data.data?.content ?? [])
+      setNegTotal(res.data.data?.totalElements ?? 0)
+    } catch { showToast('Failed to load deal negotiations', 'error') }
+    finally  { setNegotiationsLoading(false) }
+  }
+
+  const loadDealResults = async () => {
+    setDealResultsLoading(true)
+    try {
+      const res = await getMyDealResults(resultSearch || undefined, resultFilter === 'ALL' ? undefined : resultFilter, resultPage, resultPageSize)
+      setDealResults(res.data.data?.content ?? [])
+      setResultTotal(res.data.data?.totalElements ?? 0)
+    } catch { showToast('Failed to load deal results', 'error') }
+    finally  { setDealResultsLoading(false) }
+  }
+
   // Reset to page 0 whenever the search/filter changes (new result set)
   useEffect(() => { setLeadPage(0) }, [search, statusFilter, leadSalesRepFilter])
   useEffect(() => { loadLeads() }, [search, statusFilter, leadSalesRepFilter, leadPage, leadPageSize])
@@ -798,6 +1267,10 @@ export default function SalesDashboard() {
   useEffect(() => { if (activeTab === 'opportunities') loadOpps() }, [activeTab, oppSearch, oppPage, oppPageSize])
   useEffect(() => { setQuotePage(0) }, [quoteSearch, quoteStatusFilter])
   useEffect(() => { if (activeTab === 'quotations') loadQuotes() }, [activeTab, quoteSearch, quoteStatusFilter, quotePage, quotePageSize])
+  useEffect(() => { setNegPage(0) }, [negSearch, negMeetingFrom, negMeetingTo])
+  useEffect(() => { if (activeTab === 'negotiations') loadNegotiations() }, [activeTab, negSearch, negMeetingFrom, negMeetingTo, negPage, negPageSize])
+  useEffect(() => { setResultPage(0) }, [resultSearch, resultFilter])
+  useEffect(() => { if (activeTab === 'dealResults') loadDealResults() }, [activeTab, resultSearch, resultFilter, resultPage, resultPageSize])
   useEffect(() => {
     getSalesReps().then(res => setSalesReps(res.data.data ?? [])).catch(() => { /* dropdown just stays empty */ })
   }, [])
@@ -914,14 +1387,45 @@ export default function SalesDashboard() {
     loadQuotes()
   }
 
-  const handleSendToNegotiation = async (quote: Quotation) => {
-    try {
-      await createDealNegotiation(quote.id)
-      showToast(`${quote.quotationNo} moved to Sent — Deal Negotiation (SAL-004) isn't built yet.`)
-      loadQuotes()
-    } catch (err: unknown) {
-      showToast(getApiErrorMessage(err, 'Failed to send for negotiation'), 'error')
-    }
+  const handleCreateDealNegotiation = async (data: CreateDealNegotiationRequest) => {
+    if (!negotiateForQuote) return
+    await createDealNegotiation(negotiateForQuote.id, data)
+    showToast(`Deal Negotiation created for ${negotiateForQuote.quotationNo} — check the Negotiations tab.`)
+    setNegotiateForQuote(null)
+    loadQuotes()
+  }
+
+  const refreshViewedNegotiation = async (id: number) => {
+    const res = await getDealNegotiation(id)
+    setViewNegotiation(res.data.data ?? null)
+  }
+
+  const handleSaveNegotiationHeader = async (data: UpdateDealNegotiationRequest) => {
+    if (!viewNegotiation) return
+    await updateDealNegotiation(viewNegotiation.id, data)
+    await refreshViewedNegotiation(viewNegotiation.id)
+    showToast('Deal Negotiation updated')
+    loadNegotiations()
+  }
+
+  const handleAddNegotiationHistory = async (data: AddNegotiationHistoryRequest) => {
+    if (!viewNegotiation) return
+    await addNegotiationHistory(viewNegotiation.id, data)
+    await refreshViewedNegotiation(viewNegotiation.id)
+  }
+
+  const handleCompleteNegotiation = () => {
+    if (!viewNegotiation) return
+    setCompleteNegotiationTarget(viewNegotiation)
+  }
+
+  const handleSaveDealResult = async (data: CreateDealResultRequest) => {
+    if (!completeNegotiationTarget) return
+    await createDealResult(completeNegotiationTarget.id, data)
+    showToast(`Deal ${completeNegotiationTarget.negotiationNo} marked as ${data.result}`)
+    setCompleteNegotiationTarget(null)
+    setViewNegotiation(null)
+    loadNegotiations()
   }
 
   const handleLogout = () => { logout(); navigate('/login') }
@@ -1003,6 +1507,34 @@ export default function SalesDashboard() {
             <span className={`text-xs px-1.5 py-0.5 rounded-full
               ${activeTab === 'quotations' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
               {quoteTotal}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('negotiations')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
+              ${activeTab === 'negotiations'
+                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+          >
+            <Handshake className="w-4 h-4" />
+            Negotiations
+            <span className={`text-xs px-1.5 py-0.5 rounded-full
+              ${activeTab === 'negotiations' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
+              {negTotal}
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('dealResults')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
+              ${activeTab === 'dealResults'
+                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
+                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
+          >
+            <Trophy className="w-4 h-4" />
+            Deal Won/Lost
+            <span className={`text-xs px-1.5 py-0.5 rounded-full
+              ${activeTab === 'dealResults' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
+              {resultTotal}
             </span>
           </button>
         </div>
@@ -1337,7 +1869,7 @@ export default function SalesDashboard() {
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                           <button
-                            onClick={() => handleSendToNegotiation(quote)}
+                            onClick={() => setNegotiateForQuote(quote)}
                             disabled={quote.status !== 'DRAFT'}
                             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Create Deal Negotiation"
@@ -1356,6 +1888,195 @@ export default function SalesDashboard() {
               page={quotePage} pageSize={quotePageSize} totalElements={quoteTotal}
               onPageChange={setQuotePage}
               onPageSizeChange={size => { setQuotePageSize(size); setQuotePage(0) }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── DEAL NEGOTIATION TAB (SAL-004) ──────────────────────── */}
+      {activeTab === 'negotiations' && (
+        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+          <div className="flex flex-wrap gap-3 items-center justify-between">
+            <div className="flex flex-wrap gap-3 flex-1 items-center">
+              <div className="relative flex-1 min-w-[220px] max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search Negotiation No, Quotation No, customer..."
+                  className="input-field pl-9 py-2.5"
+                  value={negSearch}
+                  onChange={e => setNegSearch(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span>Meeting</span>
+                <input type="date" className="input-field py-2 text-sm" value={negMeetingFrom}
+                  onChange={e => setNegMeetingFrom(e.target.value)} />
+                <span>to</span>
+                <input type="date" className="input-field py-2 text-sm" value={negMeetingTo}
+                  onChange={e => setNegMeetingTo(e.target.value)} />
+              </div>
+              <button onClick={loadNegotiations} className="btn-icon" title="Refresh">
+                <RefreshCw className={`w-4 h-4 ${negotiationsLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 max-w-xs text-right">
+              Deal Negotiations can only be created from a Draft Quotation (see the "Negotiate" action in the Quotations tab).
+            </p>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-800/50">
+                    {['Negotiation No', 'Quotation', 'Customer', 'Sales Rep', 'Meeting Date', 'Status', 'Actions'].map(h => (
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
+                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                  {negotiationsLoading ? (
+                    <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+                      Loading deal negotiations...
+                    </td></tr>
+                  ) : negotiations.length === 0 ? (
+                    <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                      <Handshake className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                      No deal negotiations yet. Start one from a Draft Quotation.
+                    </td></tr>
+                  ) : negotiations.map(neg => (
+                    <tr key={neg.id} className="hover:bg-slate-800/40 transition-colors group">
+                      <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{neg.negotiationNo}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{neg.quotationNo}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{neg.customer}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{neg.salesRepName || '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">
+                        {new Date(neg.meetingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${negotiationStatusColor[neg.status] ?? ''}`}>
+                          {neg.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => setViewNegotiation(neg)}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                            title={neg.status === 'NEGOTIATING' ? 'Edit' : 'View'}>
+                            {neg.status === 'NEGOTIATING' ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            onClick={() => setCompleteNegotiationTarget(neg)}
+                            disabled={neg.status !== 'NEGOTIATING'}
+                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Complete Negotiation"
+                          >
+                            <Trophy className="w-3.5 h-3.5" />
+                            Complete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              page={negPage} pageSize={negPageSize} totalElements={negTotal}
+              onPageChange={setNegPage}
+              onPageSizeChange={size => { setNegPageSize(size); setNegPage(0) }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── DEAL WON/LOST TAB (SAL-005) ─────────────────────────── */}
+      {activeTab === 'dealResults' && (
+        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+          <div className="flex flex-wrap gap-3 items-center justify-between">
+            <div className="flex flex-wrap gap-3 flex-1">
+              <div className="relative flex-1 min-w-[220px] max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search Negotiation No, Opportunity, customer..."
+                  className="input-field pl-9 py-2.5"
+                  value={resultSearch}
+                  onChange={e => setResultSearch(e.target.value)}
+                />
+              </div>
+              <select
+                value={resultFilter}
+                onChange={e => setResultFilter(e.target.value)}
+                className="input-field py-2.5 pr-8 min-w-[140px]"
+              >
+                <option value="ALL">All Results</option>
+                {DEAL_RESULTS.map(r => <option key={r} value={r}>{r.charAt(0) + r.slice(1).toLowerCase()}</option>)}
+              </select>
+              <button onClick={loadDealResults} className="btn-icon" title="Refresh">
+                <RefreshCw className={`w-4 h-4 ${dealResultsLoading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 max-w-xs text-right">
+              Deal Results are recorded via "Complete Negotiation" in the Negotiations tab and cannot be changed afterwards.
+            </p>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-800 bg-slate-800/50">
+                    {['Negotiation No', 'Opportunity', 'Customer', 'Sales Rep', 'Deal Amount', 'Result', 'Decision Date', 'Actions'].map(h => (
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
+                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/50">
+                  {dealResultsLoading ? (
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
+                      Loading deal results...
+                    </td></tr>
+                  ) : dealResults.length === 0 ? (
+                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                      <Trophy className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                      No completed deals yet. Complete a Negotiation to record a Won/Lost result.
+                    </td></tr>
+                  ) : dealResults.map(dr => (
+                    <tr key={dr.id} className="hover:bg-slate-800/40 transition-colors group">
+                      <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{dr.negotiationNo}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{dr.opportunityName}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{dr.customer}</td>
+                      <td className="px-4 py-3.5 text-slate-300">{dr.salesRepName || '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-300 tabular-nums">{dr.dealAmount.toLocaleString('en-US')}</td>
+                      <td className="px-4 py-3.5">
+                        <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${dealResultColor[dr.result] ?? ''}`}>
+                          {dr.result}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">
+                        {new Date(dr.decisionDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                        <button onClick={() => setViewDealResult(dr)}
+                          className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              page={resultPage} pageSize={resultPageSize} totalElements={resultTotal}
+              onPageChange={setResultPage}
+              onPageSizeChange={size => { setResultPageSize(size); setResultPage(0) }}
             />
           </div>
         </div>
@@ -1406,6 +2127,43 @@ export default function SalesDashboard() {
           initial={editQuote}
           onSave={handleSaveQuotation}
           onClose={() => { setQuoteModalOpen(false); setEditQuote(null) }}
+        />
+      )}
+
+      {/* Create Deal Negotiation Modal (from a Quotation row) */}
+      {negotiateForQuote && (
+        <CreateDealNegotiationModal
+          quote={negotiateForQuote}
+          onCreate={handleCreateDealNegotiation}
+          onClose={() => setNegotiateForQuote(null)}
+        />
+      )}
+
+      {/* Deal Negotiation View/Edit Modal */}
+      {viewNegotiation && (
+        <DealNegotiationModal
+          initial={viewNegotiation}
+          onSaveHeader={handleSaveNegotiationHeader}
+          onAddHistory={handleAddNegotiationHistory}
+          onComplete={handleCompleteNegotiation}
+          onClose={() => { setViewNegotiation(null); loadNegotiations() }}
+        />
+      )}
+
+      {/* Deal Won/Lost Modal ("Complete Negotiation") */}
+      {completeNegotiationTarget && (
+        <DealResultModal
+          negotiation={completeNegotiationTarget}
+          onSave={handleSaveDealResult}
+          onClose={() => setCompleteNegotiationTarget(null)}
+        />
+      )}
+
+      {/* Deal Result View Modal (read-only) */}
+      {viewDealResult && (
+        <DealResultViewModal
+          result={viewDealResult}
+          onClose={() => setViewDealResult(null)}
         />
       )}
 
