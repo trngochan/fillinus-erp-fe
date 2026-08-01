@@ -34,6 +34,12 @@
   .input-field.error {
     @apply border-red-500 focus:ring-red-500;
   }
+  /* Native <option> popups are rendered opaque by the browser, not by our translucent
+     bg-white/5 — without this, text-white text sits on the browser's default white
+     background and is invisible until hovered. */
+  .input-field option {
+    @apply bg-slate-800 text-white;
+  }
 
   /* ── Button ─────────────────────────────────────────── */
   .btn-primary {

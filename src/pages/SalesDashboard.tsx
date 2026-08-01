@@ -18,7 +18,7 @@ import {
 import type {
   Lead, Opportunity, OpportunityStage, OpportunityDetailRequest,
   CreateLeadRequest, ConvertLeadRequest, CreateOpportunityRequest,
-  Quotation, QuotationCurrency, QuotationDetailRequest,
+  Quotation, QuotationCurrency, QuotationStatus, QuotationDetailRequest,
   CreateQuotationFromOpportunityRequest, UpdateQuotationRequest,
   SalesRep, LeadSource,
 } from '@/api/sales'
@@ -28,6 +28,7 @@ const PROJECT_TYPES = ['Agency', 'Label', 'Others'] as const
 const OPPORTUNITY_STAGES: OpportunityStage[] =
   ['PROSPECTING', 'QUALIFICATION', 'PROPOSAL', 'NEGOTIATION', 'CLOSED_WON', 'CLOSED_LOST']
 const CURRENCIES: QuotationCurrency[] = ['VND', 'USD']
+const QUOTATION_STATUSES: QuotationStatus[] = ['DRAFT', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED']
 
 // ─── Status badge colours ──────────────────────────────────────
 const leadStatusColor: Record<string, string> = {
@@ -707,11 +708,12 @@ export default function SalesDashboard() {
   const [leadsLoading, setLeadsLoading] = useState(false)
   const [search,      setSearch]      = useState('')
   const [statusFilter, setStatusFilter] = useState('ALL')
+  const [leadSalesRepFilter, setLeadSalesRepFilter] = useState('ALL')
   const [modalOpen,   setModalOpen]   = useState(false)
   const [editLead,    setEditLead]    = useState<Lead | null>(null)
   const [importLoading, setImportLoading] = useState(false)
   const [leadPage,     setLeadPage]     = useState(0)
-  const [leadPageSize, setLeadPageSize] = useState(20)
+  const [leadPageSize, setLeadPageSize] = useState(10)
   const [leadTotal,    setLeadTotal]    = useState(0)
   const [salesReps,    setSalesReps]    = useState<SalesRep[]>([])
 
@@ -722,7 +724,7 @@ export default function SalesDashboard() {
   const [oppModalOpen, setOppModalOpen] = useState(false)
   const [editOpp,   setEditOpp]   = useState<Opportunity | null>(null)
   const [oppPage,     setOppPage]     = useState(0)
-  const [oppPageSize, setOppPageSize] = useState(20)
+  const [oppPageSize, setOppPageSize] = useState(10)
   const [oppTotal,    setOppTotal]    = useState(0)
   const [convertLeadTarget, setConvertLeadTarget] = useState<Lead | null>(null)
   const [createQuoteForOpp, setCreateQuoteForOpp] = useState<Opportunity | null>(null)
@@ -731,10 +733,11 @@ export default function SalesDashboard() {
   const [quotes,       setQuotes]       = useState<Quotation[]>([])
   const [quotesLoading, setQuotesLoading] = useState(false)
   const [quoteSearch,  setQuoteSearch]  = useState('')
+  const [quoteStatusFilter, setQuoteStatusFilter] = useState('ALL')
   const [quoteModalOpen, setQuoteModalOpen] = useState(false)
   const [editQuote,    setEditQuote]    = useState<Quotation | null>(null)
   const [quotePage,     setQuotePage]     = useState(0)
-  const [quotePageSize, setQuotePageSize] = useState(20)
+  const [quotePageSize, setQuotePageSize] = useState(10)
   const [quoteTotal,    setQuoteTotal]    = useState(0)
 
   // Confirmation dialog (shared) — Delete Lead / Delete Opportunity / Delete Quotation (all danger tone)
@@ -756,7 +759,12 @@ export default function SalesDashboard() {
   const loadLeads = async () => {
     setLeadsLoading(true)
     try {
-      const res = await getLeads(search || undefined, statusFilter === 'ALL' ? undefined : statusFilter, leadPage, leadPageSize)
+      const res = await getLeads(
+        search || undefined,
+        statusFilter === 'ALL' ? undefined : statusFilter,
+        leadSalesRepFilter === 'ALL' ? undefined : Number(leadSalesRepFilter),
+        leadPage, leadPageSize
+      )
       setLeads(res.data.data?.content ?? [])
       setLeadTotal(res.data.data?.totalElements ?? 0)
     } catch { showToast('Failed to load leads', 'error') }
@@ -776,7 +784,7 @@ export default function SalesDashboard() {
   const loadQuotes = async () => {
     setQuotesLoading(true)
     try {
-      const res = await getMyQuotations(quoteSearch || undefined, quotePage, quotePageSize)
+      const res = await getMyQuotations(quoteSearch || undefined, quoteStatusFilter === 'ALL' ? undefined : quoteStatusFilter, quotePage, quotePageSize)
       setQuotes(res.data.data?.content ?? [])
       setQuoteTotal(res.data.data?.totalElements ?? 0)
     } catch { showToast('Failed to load quotations', 'error') }
@@ -784,12 +792,12 @@ export default function SalesDashboard() {
   }
 
   // Reset to page 0 whenever the search/filter changes (new result set)
-  useEffect(() => { setLeadPage(0) }, [search, statusFilter])
-  useEffect(() => { loadLeads() }, [search, statusFilter, leadPage, leadPageSize])
+  useEffect(() => { setLeadPage(0) }, [search, statusFilter, leadSalesRepFilter])
+  useEffect(() => { loadLeads() }, [search, statusFilter, leadSalesRepFilter, leadPage, leadPageSize])
   useEffect(() => { setOppPage(0) }, [oppSearch])
   useEffect(() => { if (activeTab === 'opportunities') loadOpps() }, [activeTab, oppSearch, oppPage, oppPageSize])
-  useEffect(() => { setQuotePage(0) }, [quoteSearch])
-  useEffect(() => { if (activeTab === 'quotations') loadQuotes() }, [activeTab, quoteSearch, quotePage, quotePageSize])
+  useEffect(() => { setQuotePage(0) }, [quoteSearch, quoteStatusFilter])
+  useEffect(() => { if (activeTab === 'quotations') loadQuotes() }, [activeTab, quoteSearch, quoteStatusFilter, quotePage, quotePageSize])
   useEffect(() => {
     getSalesReps().then(res => setSalesReps(res.data.data ?? [])).catch(() => { /* dropdown just stays empty */ })
   }, [])
@@ -1028,6 +1036,14 @@ export default function SalesDashboard() {
                 <option value="QUALIFIED">Qualified</option>
                 <option value="REJECTED">Rejected</option>
               </select>
+              <select
+                value={leadSalesRepFilter}
+                onChange={e => setLeadSalesRepFilter(e.target.value)}
+                className="input-field py-2.5 pr-8 min-w-[160px]"
+              >
+                <option value="ALL">All Sales Reps</option>
+                {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
+              </select>
               <button onClick={loadLeads} className="btn-icon" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${leadsLoading ? 'animate-spin' : ''}`} />
               </button>
@@ -1249,6 +1265,14 @@ export default function SalesDashboard() {
                   onChange={e => setQuoteSearch(e.target.value)}
                 />
               </div>
+              <select
+                value={quoteStatusFilter}
+                onChange={e => setQuoteStatusFilter(e.target.value)}
+                className="input-field py-2.5 pr-8 min-w-[140px]"
+              >
+                <option value="ALL">All Status</option>
+                {QUOTATION_STATUSES.map(s => <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
+              </select>
               <button onClick={loadQuotes} className="btn-icon" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
               </button>

@@ -173,8 +173,8 @@ export const getSalesReps = () =>
   api.get<ApiResponse<SalesRep[]>>('/users', { params: { role: 'SALE' } })
 
 // ─── Leads ────────────────────────────────────────────────────
-export const getLeads = (search?: string, status?: string, page = 0, size = 20) =>
-  api.get<ApiResponse<PageResponse<Lead>>>('/leads', { params: { search, status, page, size } })
+export const getLeads = (search?: string, status?: string, salesRepId?: number, page = 0, size = 10) =>
+  api.get<ApiResponse<PageResponse<Lead>>>('/leads', { params: { search, status, salesRepId, page, size } })
 
 export const getLead = (id: number) =>
   api.get<ApiResponse<Lead>>(`/leads/${id}`)
@@ -203,7 +203,7 @@ export const downloadLeadTemplate = () =>
   api.get('/leads/import/template', { responseType: 'blob' })
 
 // ─── Opportunities ────────────────────────────────────────────
-export const getMyOpportunities = (search?: string, page = 0, size = 20) =>
+export const getMyOpportunities = (search?: string, page = 0, size = 10) =>
   api.get<ApiResponse<PageResponse<Opportunity>>>('/opportunities', { params: { search, page, size } })
 
 export const getOpportunity = (id: number) =>
@@ -223,8 +223,8 @@ export const deleteOpportunity = (id: number) =>
 export const createQuotationFromOpportunity = (opportunityId: number, data: CreateQuotationFromOpportunityRequest) =>
   api.post<ApiResponse<Quotation>>(`/opportunities/${opportunityId}/quotations`, data)
 
-export const getMyQuotations = (search?: string, page = 0, size = 20) =>
-  api.get<ApiResponse<PageResponse<Quotation>>>('/quotations', { params: { search, page, size } })
+export const getMyQuotations = (search?: string, status?: string, page = 0, size = 10) =>
+  api.get<ApiResponse<PageResponse<Quotation>>>('/quotations', { params: { search, status, page, size } })
 
 export const getQuotation = (id: number) =>
   api.get<ApiResponse<Quotation>>(`/quotations/${id}`)
