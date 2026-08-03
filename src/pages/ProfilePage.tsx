@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Link } from 'react-router-dom'
-import { User, Mail, Phone, Briefcase, Building2, Loader2, Save, KeyRound, LogOut } from 'lucide-react'
+import { User, Mail, Phone, Briefcase, Building2, Loader2, Save, KeyRound } from 'lucide-react'
 import { getMyProfile, updateMyProfile } from '@/api/auth'
 import { useAuthStore } from '@/store/authStore'
 import type { UserProfile } from '@/types/auth'
@@ -17,7 +17,7 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>
 
 export default function ProfilePage() {
-  const { user, logout, updateUser } = useAuthStore()
+  const { user, updateUser } = useAuthStore()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [success, setSuccess] = useState('')
@@ -70,34 +70,13 @@ export default function ProfilePage() {
   }
 
   if (loading) return (
-    <div className="flex items-center justify-center min-h-screen bg-slate-950">
+    <div className="flex items-center justify-center min-h-[60vh]">
       <Loader2 className="w-8 h-8 text-brand-500 animate-spin" />
     </div>
   )
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      {/* Top Nav */}
-      <header className="border-b border-white/5 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">F</span>
-            </div>
-            <span className="text-white font-semibold">FILLINUS ERP</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-slate-400 text-sm hidden sm:block">
-              {user?.fullName ?? user?.username}
-            </span>
-            <button onClick={logout}
-              className="flex items-center gap-2 text-slate-400 hover:text-red-400 transition-colors text-sm">
-              <LogOut className="w-4 h-4" /> Sign out
-            </button>
-          </div>
-        </div>
-      </header>
-
+    <div>
       <main className="max-w-4xl mx-auto px-4 py-8 animate-fade-in">
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-white">My Profile</h1>

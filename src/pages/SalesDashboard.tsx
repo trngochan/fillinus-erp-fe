@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
   Search, Plus, Upload, Download, RefreshCw,
   Trash2, Edit2, ArrowRightCircle, Eye, Send,
-  LogOut, User, Briefcase, Users, TrendingUp, FileText, X, Check, Loader2,
+  Briefcase, Users, FileText, X, Check, Loader2,
   Handshake, Trophy, History, ThumbsUp, ThumbsDown,
 } from 'lucide-react'
-import { useAuthStore } from '@/store/authStore'
 import { getApiErrorMessage } from '@/api/axios'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import Pagination from '@/components/Pagination'
@@ -1176,12 +1175,24 @@ function SearchInput({
 }
 
 // ─── Main Sales Dashboard ──────────────────────────────────────
-export default function SalesDashboard() {
-  const { user, logout } = useAuthStore()
-  const navigate         = useNavigate()
-  const fileInputRef     = useRef<HTMLInputElement>(null)
+const SALES_TABS = ['leads', 'opportunities', 'quotations', 'negotiations', 'dealResults'] as const
+type SalesTab = typeof SALES_TABS[number]
+const isSalesTab = (v: string | null): v is SalesTab => !!v && (SALES_TABS as readonly string[]).includes(v)
 
-  const [activeTab, setActiveTab] = useState<'leads' | 'opportunities' | 'quotations' | 'negotiations' | 'dealResults'>('leads')
+export default function SalesDashboard() {
+  const fileInputRef     = useRef<HTMLInputElement>(null)
+  // Left-menu Sales sub-items deep-link here via ?tab= — sync on load and whenever it changes.
+  const [searchParams]   = useSearchParams()
+
+  const [activeTab, setActiveTab] = useState<SalesTab>(() => {
+    const t = searchParams.get('tab')
+    return isSalesTab(t) ? t : 'leads'
+  })
+
+  useEffect(() => {
+    const t = searchParams.get('tab')
+    if (isSalesTab(t) && t !== activeTab) setActiveTab(t)
+  }, [searchParams])
 
   // Lead state
   const [leads,       setLeads]       = useState<Lead[]>([])
@@ -1482,10 +1493,8 @@ export default function SalesDashboard() {
     loadNegotiations()
   }
 
-  const handleLogout = () => { logout(); navigate('/login') }
-
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="text-white">
       {/* Toast */}
       {toast && (
         <div className={`fixed top-5 right-5 z-50 px-4 py-3 rounded-xl shadow-xl text-sm font-medium animate-slide-up
@@ -1493,30 +1502,6 @@ export default function SalesDashboard() {
           {toast.msg}
         </div>
       )}
-
-      {/* Header */}
-      <header className="bg-slate-900/80 border-b border-slate-800 backdrop-blur-sm sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
-              <TrendingUp className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-bold text-white text-lg tracking-tight">FILLINUS ERP</span>
-            <span className="text-slate-500 text-sm hidden sm:block">/ Sales</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-brand-500/10 border border-brand-500/20 rounded-lg">
-              <User className="w-4 h-4 text-brand-400" />
-              <span className="text-sm text-slate-300 font-medium">{user?.fullName}</span>
-              <span className="text-xs text-brand-400 bg-brand-500/20 px-1.5 py-0.5 rounded">SALE</span>
-            </div>
-            <button onClick={handleLogout} className="flex items-center gap-1.5 text-slate-400 hover:text-white text-sm transition-colors px-2 py-1.5 rounded-lg hover:bg-slate-800">
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:block">Logout</span>
-            </button>
-          </div>
-        </div>
-      </header>
 
       {/* Tabs */}
       <div className="max-w-7xl mx-auto px-6 pt-6">

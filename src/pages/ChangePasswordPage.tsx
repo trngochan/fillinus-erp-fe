@@ -50,20 +50,13 @@ export default function ChangePasswordPage() {
     setShow(prev => ({ ...prev, [field]: !prev[field] }))
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <header className="border-b border-white/5 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-10">
-        <div className="max-w-2xl mx-auto px-4 py-4 flex items-center gap-3">
-          <Link to="/profile" className="text-slate-400 hover:text-white transition-colors">
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">F</span>
-            </div>
-            <span className="text-white font-semibold">Change Password</span>
-          </div>
-        </div>
-      </header>
+    <div>
+      <div className="border-b border-white/5 bg-slate-900/50 px-4 py-4 flex items-center gap-3">
+        <Link to="/profile" className="text-slate-400 hover:text-white transition-colors">
+          <ArrowLeft className="w-5 h-5" />
+        </Link>
+        <span className="text-white font-semibold">Change Password</span>
+      </div>
 
       <main className="max-w-2xl mx-auto px-4 py-8 animate-fade-in">
         <div className="auth-card p-8">
