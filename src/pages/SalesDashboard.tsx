@@ -34,8 +34,13 @@ const PROJECT_TYPES = ['Agency', 'Label', 'Others'] as const
 const OPPORTUNITY_STAGES: OpportunityStage[] =
   ['PROSPECTING', 'QUALIFICATION', 'PROPOSAL', 'NEGOTIATION', 'CLOSED_WON', 'CLOSED_LOST']
 const CURRENCIES: QuotationCurrency[] = ['VND', 'USD']
+const LEAD_STATUSES: Lead['status'][] = ['NEW', 'IN_PROGRESS', 'QUALIFIED', 'REJECTED']
 const QUOTATION_STATUSES: QuotationStatus[] = ['DRAFT', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED']
 const DEAL_RESULTS: DealResultType[] = ['WON', 'LOST']
+
+/** "IN_PROGRESS" -> "In Progress" — shared label formatter for every status/result filter dropdown. */
+const formatStatusLabel = (value: string) =>
+  value.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')
 
 // ─── Status badge colours ──────────────────────────────────────
 const leadStatusColor: Record<string, string> = {
@@ -114,7 +119,7 @@ function LeadModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
-          <h3 className="text-lg font-semibold text-white">{initial ? 'Edit Lead' : 'Create or Add New'}</h3>
+          <h3 className="text-lg font-semibold text-white">{initial ? 'Edit Lead' : 'Create Lead'}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4">
@@ -196,7 +201,7 @@ function LeadModal({
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary flex-1">
-              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create or Add New'}</>}
+              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create Lead'}</>}
             </button>
           </div>
         </form>
@@ -229,6 +234,11 @@ function OpportunityModal({
   )
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+
+  // Locked once converted to a Quotation (BR: Blocked once converted) — same read-only
+  // pattern as QuotationModal/DealNegotiationModal, so "view a locked record" behaves
+  // consistently across every Sales tab.
+  const editable = !initial?.hasQuotation
 
   const addRow = () => setDetails(prev => [...prev, { serviceProduct: '', quantity: 1, unit: '', remark: '' }])
   const removeRow = (i: number) => setDetails(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev)
@@ -264,27 +274,32 @@ function OpportunityModal({
       <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
           <h3 className="text-lg font-semibold text-white">
-            {initial ? `Edit Opportunity — ${initial.opportunityId}` : 'Create Opportunity'}
+            {initial ? `${editable ? 'Edit' : 'View'} Opportunity — ${initial.opportunityId}` : 'Create Opportunity'}
           </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-5">
           {error && <div className="alert-error">{error}</div>}
+          {!editable && (
+            <p className="text-xs text-slate-500">
+              This Opportunity has already been converted to a Quotation — read-only.
+            </p>
+          )}
 
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2">
               <label className="form-label">Opportunity Name *</label>
-              <input type="text" className="input-field" value={form.opportunityName}
+              <input type="text" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" value={form.opportunityName}
                 onChange={e => setForm(prev => ({ ...prev, opportunityName: e.target.value }))} />
             </div>
             <div>
               <label className="form-label">Customer *</label>
-              <input type="text" className="input-field" placeholder="Customer / company name" value={form.customer}
+              <input type="text" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" placeholder="Customer / company name" value={form.customer}
                 onChange={e => setForm(prev => ({ ...prev, customer: e.target.value }))} />
             </div>
             <div>
               <label className="form-label">Sales Rep *</label>
-              <select className="input-field" value={form.salesRepId ?? ''}
+              <select disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" value={form.salesRepId ?? ''}
                 onChange={e => setForm(prev => ({ ...prev, salesRepId: e.target.value ? Number(e.target.value) : undefined }))}>
                 <option value="">— Select Sales Rep —</option>
                 {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
@@ -292,19 +307,19 @@ function OpportunityModal({
             </div>
             <div>
               <label className="form-label">Stage</label>
-              <select className="input-field" value={form.stage}
+              <select disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" value={form.stage}
                 onChange={e => setForm(prev => ({ ...prev, stage: e.target.value as OpportunityStage }))}>
                 {OPPORTUNITY_STAGES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
               </select>
             </div>
             <div>
               <label className="form-label">Expected Revenue</label>
-              <input type="number" min="0" step="0.01" className="input-field" value={form.expectedRevenue}
+              <input type="number" min="0" step="0.01" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" value={form.expectedRevenue}
                 onChange={e => setForm(prev => ({ ...prev, expectedRevenue: e.target.value }))} />
             </div>
             <div className="col-span-2">
               <label className="form-label">Description</label>
-              <textarea className="input-field" rows={2} value={form.description}
+              <textarea disabled={!editable} rows={2} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" value={form.description}
                 onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))} />
             </div>
           </div>
@@ -312,33 +327,37 @@ function OpportunityModal({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="form-label mb-0">Detail — Service / Product *</label>
-              <button type="button" onClick={addRow} className="btn-ghost text-xs">+ Add Row</button>
+              {editable && <button type="button" onClick={addRow} className="btn-ghost text-xs">+ Add Row</button>}
             </div>
             <div className="space-y-2">
               {details.map((d, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-start bg-white/5 rounded-xl p-2.5">
-                  <input type="text" placeholder="Service/Product *" className="input-field col-span-4 py-2 text-sm"
+                  <input type="text" placeholder="Service/Product *" disabled={!editable} className="input-field col-span-4 py-2 text-sm disabled:opacity-60"
                     value={d.serviceProduct} onChange={e => updateRow(i, { serviceProduct: e.target.value })} />
-                  <input type="number" min="0" step="0.01" placeholder="Qty" className="input-field col-span-2 py-2 text-sm"
+                  <input type="number" min="0" step="0.01" placeholder="Qty" disabled={!editable} className="input-field col-span-2 py-2 text-sm disabled:opacity-60"
                     value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
-                  <input type="text" placeholder="Unit" className="input-field col-span-2 py-2 text-sm"
+                  <input type="text" placeholder="Unit" disabled={!editable} className="input-field col-span-2 py-2 text-sm disabled:opacity-60"
                     value={d.unit} onChange={e => updateRow(i, { unit: e.target.value })} />
-                  <input type="text" placeholder="Remark" className="input-field col-span-3 py-2 text-sm"
+                  <input type="text" placeholder="Remark" disabled={!editable} className="input-field col-span-3 py-2 text-sm disabled:opacity-60"
                     value={d.remark} onChange={e => updateRow(i, { remark: e.target.value })} />
+                  {editable && (
                   <button type="button" onClick={() => removeRow(i)} disabled={details.length <= 1}
                     className="col-span-1 p-2 text-slate-400 hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed" title="Remove row">
                     <Trash2 className="w-4 h-4" />
                   </button>
+                  )}
                 </div>
               ))}
             </div>
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary flex-1">
-              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create Opportunity'}</>}
-            </button>
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">{editable ? 'Cancel' : 'Close'}</button>
+            {editable && (
+              <button type="submit" disabled={saving} className="btn-primary flex-1">
+                {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create Opportunity'}</>}
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -1121,6 +1140,41 @@ function DealResultViewModal({ result, onClose }: { result: DealResult; onClose:
   )
 }
 
+// ─── Shared toolbar Search box — placeholder auto-scrolls (marquee) until focused ───
+function SearchInput({
+  value, onChange, placeholder,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder: string
+}) {
+  const [focused, setFocused] = useState(false)
+  const showMarquee = !focused && !value
+
+  return (
+    <div className="relative w-96 shrink-0">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 z-10" />
+      <input
+        type="text"
+        aria-label={placeholder}
+        className="input-field pl-9 py-2.5"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+      {showMarquee && (
+        <div className="absolute inset-0 pl-9 pr-3 flex items-center overflow-hidden pointer-events-none rounded-xl bg-white/5">
+          <div className="flex whitespace-nowrap animate-marquee text-slate-400 text-sm">
+            <span className="pr-16">{placeholder}</span>
+            <span className="pr-16">{placeholder}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Sales Dashboard ──────────────────────────────────────
 export default function SalesDashboard() {
   const { user, logout } = useAuthStore()
@@ -1544,62 +1598,55 @@ export default function SalesDashboard() {
       {activeTab === 'leads' && (
         <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
           {/* Toolbar */}
-          <div className="flex flex-wrap gap-3 items-center justify-between">
-            {/* Search + Filter */}
-            <div className="flex flex-wrap gap-3 flex-1">
-              <div className="relative flex-1 min-w-[220px] max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search lead name, company, ID..."
-                  className="input-field pl-9 py-2.5"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                />
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3 items-center justify-between">
+              <div className="flex flex-wrap gap-3 items-center">
+                <SearchInput value={search} onChange={setSearch} placeholder="Search lead name, company, ID" />
+                <button
+                  onClick={() => { setEditLead(null); setModalOpen(true) }}
+                  className="btn-primary gap-1.5 text-sm w-56 shrink-0"
+                >
+                  <Plus className="w-4 h-4" /> Create Lead
+                </button>
               </div>
+
+              {/* Actions */}
+              <div className="flex gap-2">
+                <button onClick={handleDownloadTemplate} className="btn-secondary gap-1.5 text-sm w-auto">
+                  <Download className="w-4 h-4" /> Template
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={importLoading}
+                  className="btn-secondary gap-1.5 text-sm w-auto"
+                >
+                  {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                  Import Excel
+                </button>
+                <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImport} />
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3 items-center">
               <select
                 value={statusFilter}
                 onChange={e => setStatusFilter(e.target.value)}
-                className="input-field py-2.5 pr-8 min-w-[140px]"
+                className="input-field py-2.5 pr-8 w-56 shrink-0"
               >
                 <option value="ALL">All Status</option>
-                <option value="NEW">New</option>
-                <option value="IN_PROGRESS">In Progress</option>
-                <option value="QUALIFIED">Qualified</option>
-                <option value="REJECTED">Rejected</option>
+                {LEAD_STATUSES.map(s => <option key={s} value={s}>{formatStatusLabel(s)}</option>)}
               </select>
               <select
                 value={leadSalesRepFilter}
                 onChange={e => setLeadSalesRepFilter(e.target.value)}
-                className="input-field py-2.5 pr-8 min-w-[160px]"
+                className="input-field py-2.5 pr-8 w-56 shrink-0"
               >
                 <option value="ALL">All Sales Reps</option>
                 {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
               </select>
               <button onClick={loadLeads} className="btn-icon" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${leadsLoading ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-2">
-              <button onClick={handleDownloadTemplate} className="btn-secondary gap-1.5 text-xs">
-                <Download className="w-4 h-4" /> Template
-              </button>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={importLoading}
-                className="btn-secondary gap-1.5 text-xs"
-              >
-                {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-                Import Excel
-              </button>
-              <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleImport} />
-              <button
-                onClick={() => { setEditLead(null); setModalOpen(true) }}
-                className="btn-primary gap-1.5 text-sm"
-              >
-                <Plus className="w-4 h-4" /> Create or Add New
               </button>
             </div>
           </div>
@@ -1678,27 +1725,18 @@ export default function SalesDashboard() {
       {/* ── OPPORTUNITY TAB ──────────────────────────────────────── */}
       {activeTab === 'opportunities' && (
         <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
-          <div className="flex flex-wrap gap-3 items-center justify-between">
-            <div className="flex flex-wrap gap-3 flex-1">
-              <div className="relative flex-1 min-w-[220px] max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search Opp No, name, customer..."
-                  className="input-field pl-9 py-2.5"
-                  value={oppSearch}
-                  onChange={e => setOppSearch(e.target.value)}
-                />
-              </div>
-              <button onClick={loadOpps} className="btn-icon" title="Refresh">
-                <RefreshCw className={`w-4 h-4 ${oppsLoading ? 'animate-spin' : ''}`} />
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-3 items-center">
+              <SearchInput value={oppSearch} onChange={setOppSearch} placeholder="Search Opp No, name, customer" />
+              <button
+                onClick={() => { setEditOpp(null); setOppModalOpen(true) }}
+                className="btn-primary gap-1.5 text-sm w-56 shrink-0"
+              >
+                <Plus className="w-4 h-4" /> Create Opportunity
               </button>
             </div>
-            <button
-              onClick={() => { setEditOpp(null); setOppModalOpen(true) }}
-              className="btn-primary gap-1.5 text-sm"
-            >
-              <Plus className="w-4 h-4" /> Create Opportunity
+            <button onClick={loadOpps} className="btn-icon self-start" title="Refresh">
+              <RefreshCw className={`w-4 h-4 ${oppsLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
 
@@ -1746,10 +1784,9 @@ export default function SalesDashboard() {
                       <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
                         <div className="flex items-center gap-1">
                           <button onClick={() => { setEditOpp(opp); setOppModalOpen(true) }}
-                            disabled={opp.hasQuotation}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={opp.hasQuotation ? 'Already converted to Quotation — locked' : 'Edit'}>
-                            <Edit2 className="w-3.5 h-3.5" />
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                            title={opp.hasQuotation ? 'Already converted to Quotation — View' : 'Edit'}>
+                            {opp.hasQuotation ? <Eye className="w-3.5 h-3.5" /> : <Edit2 className="w-3.5 h-3.5" />}
                           </button>
                           <button onClick={() => handleDeleteOpportunity(opp)}
                             disabled={opp.hasQuotation}
@@ -1785,33 +1822,28 @@ export default function SalesDashboard() {
       {/* ── QUOTATION TAB ────────────────────────────────────────── */}
       {activeTab === 'quotations' && (
         <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
-          <div className="flex flex-wrap gap-3 items-center justify-between">
-            <div className="flex flex-wrap gap-3 flex-1">
-              <div className="relative flex-1 min-w-[220px] max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search Quotation No, customer..."
-                  className="input-field pl-9 py-2.5"
-                  value={quoteSearch}
-                  onChange={e => setQuoteSearch(e.target.value)}
-                />
-              </div>
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3 items-center justify-between">
+              <SearchInput value={quoteSearch} onChange={setQuoteSearch} placeholder="Search Quotation No, customer" />
+              <p className="text-xs text-slate-500 max-w-xs text-right">
+                Quotations can only be created from an Opportunity (see the "Quote" action in the Opportunities tab).
+              </p>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3 items-center">
               <select
                 value={quoteStatusFilter}
                 onChange={e => setQuoteStatusFilter(e.target.value)}
-                className="input-field py-2.5 pr-8 min-w-[140px]"
+                className="input-field py-2.5 pr-8 w-56 shrink-0"
               >
                 <option value="ALL">All Status</option>
-                {QUOTATION_STATUSES.map(s => <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>)}
+                {QUOTATION_STATUSES.map(s => <option key={s} value={s}>{formatStatusLabel(s)}</option>)}
               </select>
               <button onClick={loadQuotes} className="btn-icon" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${quotesLoading ? 'animate-spin' : ''}`} />
               </button>
             </div>
-            <p className="text-xs text-slate-500 max-w-xs text-right">
-              Quotations can only be created from an Opportunity (see the "Quote" action in the Opportunities tab).
-            </p>
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
@@ -1896,33 +1928,28 @@ export default function SalesDashboard() {
       {/* ── DEAL NEGOTIATION TAB (SAL-004) ──────────────────────── */}
       {activeTab === 'negotiations' && (
         <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
-          <div className="flex flex-wrap gap-3 items-center justify-between">
-            <div className="flex flex-wrap gap-3 flex-1 items-center">
-              <div className="relative flex-1 min-w-[220px] max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search Negotiation No, Quotation No, customer..."
-                  className="input-field pl-9 py-2.5"
-                  value={negSearch}
-                  onChange={e => setNegSearch(e.target.value)}
-                />
-              </div>
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3 items-center justify-between">
+              <SearchInput value={negSearch} onChange={setNegSearch} placeholder="Search Negotiation No, Quotation No, customer" />
+              <p className="text-xs text-slate-500 max-w-xs text-right">
+                Deal Negotiations can only be created from a Draft Quotation (see the "Negotiate" action in the Quotations tab).
+              </p>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3 items-center">
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <span>Meeting</span>
-                <input type="date" className="input-field py-2 text-sm" value={negMeetingFrom}
+                <input type="date" className="input-field py-2 text-sm w-56 shrink-0" value={negMeetingFrom}
                   onChange={e => setNegMeetingFrom(e.target.value)} />
                 <span>to</span>
-                <input type="date" className="input-field py-2 text-sm" value={negMeetingTo}
+                <input type="date" className="input-field py-2 text-sm w-56 shrink-0" value={negMeetingTo}
                   onChange={e => setNegMeetingTo(e.target.value)} />
               </div>
               <button onClick={loadNegotiations} className="btn-icon" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${negotiationsLoading ? 'animate-spin' : ''}`} />
               </button>
             </div>
-            <p className="text-xs text-slate-500 max-w-xs text-right">
-              Deal Negotiations can only be created from a Draft Quotation (see the "Negotiate" action in the Quotations tab).
-            </p>
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
@@ -1930,7 +1957,7 @@ export default function SalesDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
-                    {['Negotiation No', 'Quotation', 'Customer', 'Sales Rep', 'Meeting Date', 'Status', 'Actions'].map(h => (
+                    {['Negotiation No', 'Quotation No', 'Customer', 'Sales Rep', 'Meeting Date', 'Status', 'Actions'].map(h => (
                       <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
                         ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
                     ))}
@@ -1996,33 +2023,28 @@ export default function SalesDashboard() {
       {/* ── DEAL WON/LOST TAB (SAL-005) ─────────────────────────── */}
       {activeTab === 'dealResults' && (
         <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
-          <div className="flex flex-wrap gap-3 items-center justify-between">
-            <div className="flex flex-wrap gap-3 flex-1">
-              <div className="relative flex-1 min-w-[220px] max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search Negotiation No, Opportunity, customer..."
-                  className="input-field pl-9 py-2.5"
-                  value={resultSearch}
-                  onChange={e => setResultSearch(e.target.value)}
-                />
-              </div>
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3 items-center justify-between">
+              <SearchInput value={resultSearch} onChange={setResultSearch} placeholder="Search Negotiation No, Opportunity, customer" />
+              <p className="text-xs text-slate-500 max-w-xs text-right">
+                Deal Results are recorded via "Complete Negotiation" in the Negotiations tab and cannot be changed afterwards.
+              </p>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3 items-center">
               <select
                 value={resultFilter}
                 onChange={e => setResultFilter(e.target.value)}
-                className="input-field py-2.5 pr-8 min-w-[140px]"
+                className="input-field py-2.5 pr-8 w-56 shrink-0"
               >
-                <option value="ALL">All Results</option>
-                {DEAL_RESULTS.map(r => <option key={r} value={r}>{r.charAt(0) + r.slice(1).toLowerCase()}</option>)}
+                <option value="ALL">All Status</option>
+                {DEAL_RESULTS.map(r => <option key={r} value={r}>{formatStatusLabel(r)}</option>)}
               </select>
               <button onClick={loadDealResults} className="btn-icon" title="Refresh">
                 <RefreshCw className={`w-4 h-4 ${dealResultsLoading ? 'animate-spin' : ''}`} />
               </button>
             </div>
-            <p className="text-xs text-slate-500 max-w-xs text-right">
-              Deal Results are recorded via "Complete Negotiation" in the Negotiations tab and cannot be changed afterwards.
-            </p>
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
