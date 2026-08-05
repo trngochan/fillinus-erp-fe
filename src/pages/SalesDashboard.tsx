@@ -398,6 +398,8 @@ function ConvertLeadModal({
     projectType: 'Agency',
     expectedDealValue: undefined,
     salesRepId: lead.salesRepId ?? undefined as unknown as number,
+    stage: 'PROSPECTING',
+    description: '',
   })
   const [details, setDetails] = useState<OpportunityDetailRequest[]>(
     [{ serviceProduct: '', quantity: 1, unit: '', remark: '' }]
@@ -456,6 +458,18 @@ function ConvertLeadModal({
               <option value="">— Select Sales Rep —</option>
               {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
             </select>
+          </div>
+          <div>
+            <label className="form-label">Stage</label>
+            <select className="input-field" value={form.stage}
+              onChange={e => setForm(prev => ({ ...prev, stage: e.target.value as OpportunityStage }))}>
+              {OPPORTUNITY_STAGES.map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="form-label">Description</label>
+            <textarea className="input-field" rows={2} value={form.description}
+              onChange={e => setForm(prev => ({ ...prev, description: e.target.value }))} />
           </div>
 
           <div>
@@ -1689,7 +1703,7 @@ export default function SalesDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
-                    {['Opp ID', 'Name', 'Customer', 'Sales Rep', 'Stage', 'Expected Revenue', 'Status', 'Actions'].map(h => (
+                    {['Opp ID', 'Name', 'Lead', 'Customer', 'Sales Rep', 'Stage', 'Expected Revenue', 'Status', 'Actions'].map(h => (
                       <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
                         ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
                     ))}
@@ -1697,12 +1711,12 @@ export default function SalesDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
                   {oppsLoading ? (
-                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                       Loading opportunities...
                     </td></tr>
                   ) : opps.length === 0 ? (
-                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                       <Briefcase className="w-10 h-10 mx-auto mb-3 opacity-30" />
                       No opportunities yet. Create one or convert a Lead to get started!
                     </td></tr>
@@ -1710,6 +1724,7 @@ export default function SalesDashboard() {
                     <tr key={opp.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{opp.opportunityId}</td>
                       <td className="px-4 py-3.5 font-medium text-white">{opp.opportunityName}</td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">{opp.leadName || '—'}</td>
                       <td className="px-4 py-3.5 text-slate-300">{opp.customer}</td>
                       <td className="px-4 py-3.5 text-slate-300">{opp.salesRepName || '—'}</td>
                       <td className="px-4 py-3.5">

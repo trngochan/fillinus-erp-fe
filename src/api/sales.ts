@@ -49,6 +49,7 @@ export interface Opportunity {
   id: number
   opportunityId: string
   leadId: number | null
+  leadName: string | null
   opportunityName: string
   customer: string
   salesRepId: number
@@ -88,6 +89,8 @@ export interface ConvertLeadRequest {
   projectType: 'Agency' | 'Label' | 'Others'
   expectedDealValue?: number
   salesRepId: number
+  stage?: OpportunityStage
+  description?: string
   details: OpportunityDetailRequest[]
 }
 
