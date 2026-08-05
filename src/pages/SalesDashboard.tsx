@@ -1534,85 +1534,10 @@ export default function SalesDashboard() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="max-w-7xl mx-auto px-6 pt-6">
-        <div className="flex gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1 w-fit">
-          <button
-            onClick={() => setActiveTab('leads')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
-              ${activeTab === 'leads'
-                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            <Users className="w-4 h-4" />
-            Leads
-            <span className={`text-xs px-1.5 py-0.5 rounded-full
-              ${activeTab === 'leads' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
-              {leadTotal}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('opportunities')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
-              ${activeTab === 'opportunities'
-                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            <Briefcase className="w-4 h-4" />
-            Opportunities
-            <span className={`text-xs px-1.5 py-0.5 rounded-full
-              ${activeTab === 'opportunities' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
-              {oppTotal}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('quotations')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
-              ${activeTab === 'quotations'
-                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            <FileText className="w-4 h-4" />
-            Quotations
-            <span className={`text-xs px-1.5 py-0.5 rounded-full
-              ${activeTab === 'quotations' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
-              {quoteTotal}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('negotiations')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
-              ${activeTab === 'negotiations'
-                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            <Handshake className="w-4 h-4" />
-            Negotiations
-            <span className={`text-xs px-1.5 py-0.5 rounded-full
-              ${activeTab === 'negotiations' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
-              {negTotal}
-            </span>
-          </button>
-          <button
-            onClick={() => setActiveTab('dealResults')}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all
-              ${activeTab === 'dealResults'
-                ? 'bg-brand-600 text-white shadow-lg shadow-brand-600/25'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}
-          >
-            <Trophy className="w-4 h-4" />
-            Deal Won/Lost
-            <span className={`text-xs px-1.5 py-0.5 rounded-full
-              ${activeTab === 'dealResults' ? 'bg-white/20' : 'bg-slate-700 text-slate-400'}`}>
-              {resultTotal}
-            </span>
-          </button>
-        </div>
-      </div>
-
       {/* ── LEAD TAB ─────────────────────────────────────────────── */}
       {activeTab === 'leads' && (
-        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+        <div className="max-w-7xl mx-auto px-6 pb-10 pt-6 space-y-5">
+          <h1 className="text-xl font-bold text-white tracking-wide">LEAD MANAGEMENT</h1>
           {/* Toolbar */}
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3 items-center justify-between">
@@ -1742,7 +1667,8 @@ export default function SalesDashboard() {
 
       {/* ── OPPORTUNITY TAB ──────────────────────────────────────── */}
       {activeTab === 'opportunities' && (
-        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+        <div className="max-w-7xl mx-auto px-6 pb-10 pt-6 space-y-5">
+          <h1 className="text-xl font-bold text-white tracking-wide">OPPORTUNITY MANAGEMENT</h1>
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap gap-3 items-center">
               <SearchInput value={oppSearch} onChange={setOppSearch} placeholder="Search Opp No, name, customer" />
@@ -1839,7 +1765,8 @@ export default function SalesDashboard() {
 
       {/* ── QUOTATION TAB ────────────────────────────────────────── */}
       {activeTab === 'quotations' && (
-        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+        <div className="max-w-7xl mx-auto px-6 pb-10 pt-6 space-y-5">
+          <h1 className="text-xl font-bold text-white tracking-wide">QUOTATION MANAGEMENT</h1>
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3 items-center justify-between">
               <SearchInput value={quoteSearch} onChange={setQuoteSearch} placeholder="Search Quotation No, customer" />
@@ -1945,7 +1872,8 @@ export default function SalesDashboard() {
 
       {/* ── DEAL NEGOTIATION TAB (SAL-004) ──────────────────────── */}
       {activeTab === 'negotiations' && (
-        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+        <div className="max-w-7xl mx-auto px-6 pb-10 pt-6 space-y-5">
+          <h1 className="text-xl font-bold text-white tracking-wide">DEAL NEGOTIATION MANAGEMENT</h1>
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3 items-center justify-between">
               <SearchInput value={negSearch} onChange={setNegSearch} placeholder="Search Negotiation No, Quotation No, customer" />
@@ -2040,7 +1968,8 @@ export default function SalesDashboard() {
 
       {/* ── DEAL WON/LOST TAB (SAL-005) ─────────────────────────── */}
       {activeTab === 'dealResults' && (
-        <div className="max-w-7xl mx-auto px-6 pb-10 mt-6 space-y-5">
+        <div className="max-w-7xl mx-auto px-6 pb-10 pt-6 space-y-5">
+          <h1 className="text-xl font-bold text-white tracking-wide">DEAL WON / LOST</h1>
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3 items-center justify-between">
               <SearchInput value={resultSearch} onChange={setResultSearch} placeholder="Search Negotiation No, Opportunity, customer" />
