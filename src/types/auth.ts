@@ -6,6 +6,7 @@ export interface LoginRequest {
 }
 
 export interface LoginResponse {
+  id: number
   accessToken: string   // BE field is 'accessToken' not 'token'
   tokenType: string
   expiresIn: number

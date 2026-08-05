@@ -7,6 +7,7 @@ import {
   Handshake, Trophy, History, ThumbsUp, ThumbsDown,
 } from 'lucide-react'
 import { getApiErrorMessage } from '@/api/axios'
+import { useAuthStore } from '@/store/authStore'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import Pagination from '@/components/Pagination'
 import {
@@ -87,6 +88,11 @@ function LeadModal({
   onSave: (data: CreateLeadRequest) => Promise<void>
   onClose: () => void
 }) {
+  const { user } = useAuthStore()
+  const isPrivileged = user?.role === 'ADMIN' || user?.role === 'MANAGER'
+  // View All, Edit Own: a Lead not assigned to the current user opens read-only (unless ADMIN/MANAGER).
+  const editable = !initial || isPrivileged || initial.salesRepId === user?.id
+
   const [form, setForm] = useState<CreateLeadRequest>({
     leadName:      initial?.leadName      ?? '',
     companyName:   initial?.companyName   ?? '',
@@ -94,7 +100,7 @@ function LeadModal({
     phone:         initial?.phone         ?? '',
     email:         initial?.email         ?? '',
     source:        initial?.source        ?? '',
-    salesRepId:    initial?.salesRepId    ?? undefined,
+    salesRepId:    initial?.salesRepId    ?? user?.id,
     remark:        initial?.remark        ?? '',
     status:        (initial?.status as 'NEW' | 'IN_PROGRESS' | 'REJECTED' | undefined) ?? undefined,
   })
@@ -118,11 +124,14 @@ function LeadModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-slate-700">
-          <h3 className="text-lg font-semibold text-white">{initial ? 'Edit Lead' : 'Create Lead'}</h3>
+          <h3 className="text-lg font-semibold text-white">{initial ? `${editable ? 'Edit' : 'View'} Lead` : 'Create Lead'}</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4">
           {error && <div className="alert-error">{error}</div>}
+          {!editable && (
+            <p className="text-xs text-slate-500">This Lead is assigned to another Sales Rep — read-only.</p>
+          )}
           {[
             { label: 'Lead Name *', key: 'leadName',      type: 'text',  placeholder: 'Company contact name' },
             { label: 'Company *',   key: 'companyName',   type: 'text',  placeholder: 'Company name' },
@@ -135,7 +144,8 @@ function LeadModal({
               <input
                 type={f.type}
                 placeholder={f.placeholder}
-                className="input-field"
+                disabled={!editable}
+                className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
                 value={(form as unknown as Record<string, string>)[f.key] ?? ''}
                 onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
               />
@@ -145,7 +155,8 @@ function LeadModal({
           <div>
             <label className="form-label">Source</label>
             <select
-              className="input-field"
+              disabled={!editable}
+              className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
               value={form.source ?? ''}
               onChange={e => setForm(prev => ({ ...prev, source: e.target.value as LeadSource | '' }))}
             >
@@ -157,7 +168,8 @@ function LeadModal({
           <div>
             <label className="form-label">Sales Rep *</label>
             <select
-              className="input-field"
+              disabled={!editable}
+              className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
               value={form.salesRepId ?? ''}
               onChange={e => setForm(prev => ({ ...prev, salesRepId: e.target.value ? Number(e.target.value) : undefined }))}
             >
@@ -170,9 +182,9 @@ function LeadModal({
             <div>
               <label className="form-label">Status</label>
               <select
-                className="input-field"
+                className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
                 value={form.status ?? initial.status}
-                disabled={initial.status === 'QUALIFIED'}
+                disabled={!editable || initial.status === 'QUALIFIED'}
                 onChange={e => setForm(prev => ({ ...prev, status: e.target.value as 'NEW' | 'IN_PROGRESS' | 'REJECTED' }))}
               >
                 <option value="NEW">New</option>
@@ -189,7 +201,8 @@ function LeadModal({
           <div>
             <label className="form-label">Remark</label>
             <textarea
-              className="input-field"
+              disabled={!editable}
+              className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
               rows={3}
               placeholder="Notes about this lead..."
               value={form.remark ?? ''}
@@ -198,10 +211,12 @@ function LeadModal({
           </div>
 
           <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary flex-1">
-              {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create Lead'}</>}
-            </button>
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">{editable ? 'Cancel' : 'Close'}</button>
+            {editable && (
+              <button type="submit" disabled={saving} className="btn-primary flex-1">
+                {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> {initial ? 'Save Changes' : 'Create Lead'}</>}
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -218,10 +233,13 @@ function OpportunityModal({
   onSave: (data: CreateOpportunityRequest) => Promise<void>
   onClose: () => void
 }) {
+  const { user } = useAuthStore()
+  const isPrivileged = user?.role === 'ADMIN' || user?.role === 'MANAGER'
+
   const [form, setForm] = useState({
     opportunityName: initial?.opportunityName ?? '',
     customer:        initial?.customer        ?? '',
-    salesRepId:      initial?.salesRepId      ?? undefined as number | undefined,
+    salesRepId:      initial?.salesRepId      ?? user?.id as number | undefined,
     stage:           initial?.stage           ?? 'PROSPECTING' as OpportunityStage,
     expectedRevenue: initial?.expectedRevenue?.toString() ?? '0',
     description:     initial?.description     ?? '',
@@ -234,10 +252,10 @@ function OpportunityModal({
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
 
-  // Locked once converted to a Quotation (BR: Blocked once converted) — same read-only
-  // pattern as QuotationModal/DealNegotiationModal, so "view a locked record" behaves
-  // consistently across every Sales tab.
-  const editable = !initial?.hasQuotation
+  // Locked once converted to a Quotation, or (View All, Edit Own) once assigned to another
+  // Sales Rep — same read-only pattern as QuotationModal/DealNegotiationModal, so "view a
+  // locked/not-mine record" behaves consistently across every Sales tab.
+  const editable = !initial?.hasQuotation && (!initial || isPrivileged || initial.salesRepId === user?.id)
 
   const addRow = () => setDetails(prev => [...prev, { serviceProduct: '', quantity: 1, unit: '', remark: '' }])
   const removeRow = (i: number) => setDetails(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev)
@@ -281,7 +299,9 @@ function OpportunityModal({
           {error && <div className="alert-error">{error}</div>}
           {!editable && (
             <p className="text-xs text-slate-500">
-              This Opportunity has already been converted to a Quotation — read-only.
+              {initial?.hasQuotation
+                ? 'This Opportunity has already been converted to a Quotation — read-only.'
+                : 'This Opportunity is assigned to another Sales Rep — read-only.'}
             </p>
           )}
 
@@ -598,7 +618,10 @@ function QuotationModal({
   onSave: (data: UpdateQuotationRequest) => Promise<void>
   onClose: () => void
 }) {
-  const editable = initial.status === 'DRAFT'
+  const { user } = useAuthStore()
+  const isPrivileged = user?.role === 'ADMIN' || user?.role === 'MANAGER'
+  // View All, Edit Own: also locked read-only once assigned to another Sales Rep.
+  const editable = initial.status === 'DRAFT' && (isPrivileged || initial.salesRepId === user?.id)
   const [form, setForm] = useState({
     quotationDate: initial.quotationDate,
     expiredDate:   initial.expiredDate,
@@ -851,7 +874,10 @@ function DealNegotiationModal({
   onComplete: () => void
   onClose: () => void
 }) {
-  const editable = initial.status === 'NEGOTIATING'
+  const { user } = useAuthStore()
+  const isPrivileged = user?.role === 'ADMIN' || user?.role === 'MANAGER'
+  // View All, Edit Own: also locked read-only once assigned to another Sales Rep.
+  const editable = initial.status === 'NEGOTIATING' && (isPrivileged || initial.salesRepId === user?.id)
   const [form, setForm] = useState({
     meetingDate: initial.meetingDate,
     communicationChannel: initial.communicationChannel,
@@ -1180,6 +1206,11 @@ type SalesTab = typeof SALES_TABS[number]
 const isSalesTab = (v: string | null): v is SalesTab => !!v && (SALES_TABS as readonly string[]).includes(v)
 
 export default function SalesDashboard() {
+  const { user } = useAuthStore()
+  const isPrivileged = user?.role === 'ADMIN' || user?.role === 'MANAGER'
+  // View All, Edit Own: any record whose Sales Rep isn't me (and I'm not ADMIN/MANAGER) is read-only.
+  const canManage = (salesRepId?: number | null) => isPrivileged || salesRepId === user?.id
+
   const fileInputRef     = useRef<HTMLInputElement>(null)
   // Left-menu Sales sub-items deep-link here via ?tab= — sync on load and whenever it changes.
   const [searchParams]   = useSearchParams()
@@ -1675,16 +1706,18 @@ export default function SalesDashboard() {
                       <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
                         <div className="flex items-center gap-1">
                           <button onClick={() => { setEditLead(lead); setModalOpen(true) }}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
-                            <Edit2 className="w-3.5 h-3.5" />
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
+                            title={canManage(lead.salesRepId) ? 'Edit' : 'Assigned to another Sales Rep — View'}>
+                            {canManage(lead.salesRepId) ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                           <button onClick={() => handleDelete(lead)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="Delete">
+                            disabled={!canManage(lead.salesRepId)}
+                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed" title="Delete">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleConvert(lead)}
-                            disabled={lead.status === 'REJECTED'}
+                            disabled={lead.status === 'REJECTED' || !canManage(lead.salesRepId)}
                             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Convert to Opportunity"
                           >
@@ -1770,18 +1803,18 @@ export default function SalesDashboard() {
                         <div className="flex items-center gap-1">
                           <button onClick={() => { setEditOpp(opp); setOppModalOpen(true) }}
                             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-                            title={opp.hasQuotation ? 'Already converted to Quotation — View' : 'Edit'}>
-                            {opp.hasQuotation ? <Eye className="w-3.5 h-3.5" /> : <Edit2 className="w-3.5 h-3.5" />}
+                            title={opp.hasQuotation ? 'Already converted to Quotation — View' : canManage(opp.salesRepId) ? 'Edit' : 'Assigned to another Sales Rep — View'}>
+                            {opp.hasQuotation || !canManage(opp.salesRepId) ? <Eye className="w-3.5 h-3.5" /> : <Edit2 className="w-3.5 h-3.5" />}
                           </button>
                           <button onClick={() => handleDeleteOpportunity(opp)}
-                            disabled={opp.hasQuotation}
+                            disabled={opp.hasQuotation || !canManage(opp.salesRepId)}
                             className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                             title={opp.hasQuotation ? 'Already converted to Quotation — locked' : 'Delete'}>
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => setCreateQuoteForOpp(opp)}
-                            disabled={opp.hasQuotation}
+                            disabled={opp.hasQuotation || !canManage(opp.salesRepId)}
                             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             title={opp.hasQuotation ? 'Already has a Quotation' : 'Create Quotation'}
                           >
@@ -1876,18 +1909,18 @@ export default function SalesDashboard() {
                         <div className="flex items-center gap-1">
                           <button onClick={() => { setEditQuote(quote); setQuoteModalOpen(true) }}
                             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-                            title={quote.status === 'DRAFT' ? 'Edit' : 'View'}>
-                            {quote.status === 'DRAFT' ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            title={quote.status === 'DRAFT' && canManage(quote.salesRepId) ? 'Edit' : 'View'}>
+                            {quote.status === 'DRAFT' && canManage(quote.salesRepId) ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                           <button onClick={() => handleDeleteQuotation(quote)}
-                            disabled={quote.status !== 'DRAFT'}
+                            disabled={quote.status !== 'DRAFT' || !canManage(quote.salesRepId)}
                             className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                             title={quote.status !== 'DRAFT' ? 'Only a Draft quotation can be deleted' : 'Delete'}>
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => setNegotiateForQuote(quote)}
-                            disabled={quote.status !== 'DRAFT'}
+                            disabled={quote.status !== 'DRAFT' || !canManage(quote.salesRepId)}
                             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Create Deal Negotiation"
                           >
@@ -1977,12 +2010,12 @@ export default function SalesDashboard() {
                         <div className="flex items-center gap-1">
                           <button onClick={() => setViewNegotiation(neg)}
                             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-                            title={neg.status === 'NEGOTIATING' ? 'Edit' : 'View'}>
-                            {neg.status === 'NEGOTIATING' ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                            title={neg.status === 'NEGOTIATING' && canManage(neg.salesRepId) ? 'Edit' : 'View'}>
+                            {neg.status === 'NEGOTIATING' && canManage(neg.salesRepId) ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                           </button>
                           <button
                             onClick={() => setCompleteNegotiationTarget(neg)}
-                            disabled={neg.status !== 'NEGOTIATING'}
+                            disabled={neg.status !== 'NEGOTIATING' || !canManage(neg.salesRepId)}
                             className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Complete Negotiation"
                           >

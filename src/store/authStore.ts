@@ -4,6 +4,7 @@ import type { LoginResponse } from '@/types/auth'
 
 // Only the user-identity fields we need to store (not token metadata)
 interface AuthUser {
+  id: number
   username: string
   fullName: string
   role: string
@@ -28,7 +29,7 @@ export const useAuthStore = create<AuthState>()(
       login: (data) => {
         set({
           token: data.accessToken,
-          user: { username: data.username, fullName: data.fullName, role: data.role },
+          user: { id: data.id, username: data.username, fullName: data.fullName, role: data.role },
           isAuthenticated: true,
         })
       },
