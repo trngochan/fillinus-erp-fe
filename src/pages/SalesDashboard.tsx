@@ -11,7 +11,7 @@ import { useAuthStore } from '@/store/authStore'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import Pagination from '@/components/Pagination'
 import {
-  getLeads, createLead, updateLead, deleteLead, convertLead,
+  getLeads, createLead, updateLead, deleteLead, bulkDeleteLeads, convertLead,
   importLeadsExcel, downloadLeadTemplate, getSalesReps,
   getMyOpportunities, createOpportunity, updateOpportunity, deleteOpportunity,
   getMyQuotations, createQuotationFromOpportunity, updateQuotation, deleteQuotation, createDealNegotiation,
@@ -41,6 +41,10 @@ const DEAL_RESULTS: DealResultType[] = ['WON', 'LOST']
 /** "IN_PROGRESS" -> "In Progress" — shared label formatter for every status/result filter dropdown. */
 const formatStatusLabel = (value: string) =>
   value.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ')
+
+/** BUG_SALE-001 #5: shared short-date formatter for grid audit columns (Created/Updated). */
+const formatShortDate = (value: string) =>
+  new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 
 // ─── Status badge colours ──────────────────────────────────────
 const leadStatusColor: Record<string, string> = {
@@ -81,17 +85,19 @@ const dealResultColor: Record<string, string> = {
 
 // ─── Lead Form Modal ───────────────────────────────────────────
 function LeadModal({
-  initial, salesReps, onSave, onClose,
+  initial, salesReps, onSave, onClose, forceView,
 }: {
   initial?: Lead | null
   salesReps: SalesRep[]
   onSave: (data: CreateLeadRequest) => Promise<void>
   onClose: () => void
+  /** BUG_SALE-001 #7: dedicated "View" action opens read-only even for a Lead the user owns. */
+  forceView?: boolean
 }) {
   const { user } = useAuthStore()
   const isPrivileged = user?.role === 'ADMIN' || user?.role === 'MANAGER'
   // View All, Edit Own: a Lead not assigned to the current user opens read-only (unless ADMIN/MANAGER).
-  const editable = !initial || isPrivileged || initial.salesRepId === user?.id
+  const editable = !forceView && (!initial || isPrivileged || initial.salesRepId === user?.id)
 
   const [form, setForm] = useState<CreateLeadRequest>({
     leadName:      initial?.leadName      ?? '',
@@ -130,7 +136,11 @@ function LeadModal({
         <form onSubmit={submit} className="p-6 space-y-4">
           {error && <div className="alert-error">{error}</div>}
           {!editable && (
-            <p className="text-xs text-slate-500">This Lead is assigned to another Sales Rep — read-only.</p>
+            <p className="text-xs text-slate-500">
+              {forceView && (isPrivileged || initial?.salesRepId === user?.id)
+                ? 'Viewing in read-only mode.'
+                : 'This Lead is assigned to another Sales Rep — read-only.'}
+            </p>
           )}
           {[
             { label: 'Lead Name *', key: 'leadName',      type: 'text',  placeholder: 'Company contact name' },
@@ -1247,11 +1257,13 @@ export default function SalesDashboard() {
   const [leadSalesRepFilter, setLeadSalesRepFilter] = useState('ALL')
   const [modalOpen,   setModalOpen]   = useState(false)
   const [editLead,    setEditLead]    = useState<Lead | null>(null)
+  const [leadForceView, setLeadForceView] = useState(false)
   const [importLoading, setImportLoading] = useState(false)
   const [leadPage,     setLeadPage]     = useState(0)
   const [leadPageSize, setLeadPageSize] = useState(10)
   const [leadTotal,    setLeadTotal]    = useState(0)
   const [salesReps,    setSalesReps]    = useState<SalesRep[]>([])
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<number>>(new Set())
 
   // Opportunity state
   const [opps,      setOpps]      = useState<Opportunity[]>([])
@@ -1302,6 +1314,7 @@ export default function SalesDashboard() {
   // Confirmation dialog (shared) — Delete Lead / Delete Opportunity / Delete Quotation (all danger tone)
   const [confirmState, setConfirmState] = useState<
     | { type: 'deleteLead'; lead: Lead }
+    | { type: 'bulkDeleteLeads'; ids: number[] }
     | { type: 'deleteOpportunity'; opp: Opportunity }
     | { type: 'deleteQuotation'; quote: Quotation }
     | null
@@ -1373,6 +1386,7 @@ export default function SalesDashboard() {
   // Reset to page 0 whenever the search/filter changes (new result set)
   useEffect(() => { setLeadPage(0) }, [search, statusFilter, leadSalesRepFilter])
   useEffect(() => { loadLeads() }, [search, statusFilter, leadSalesRepFilter, leadPage, leadPageSize])
+  useEffect(() => { setSelectedLeadIds(new Set()) }, [search, statusFilter, leadSalesRepFilter, leadPage, leadPageSize])
   useEffect(() => { setOppPage(0) }, [oppSearch])
   useEffect(() => { if (activeTab === 'opportunities') loadOpps() }, [activeTab, oppSearch, oppPage, oppPageSize])
   useEffect(() => { setQuotePage(0) }, [quoteSearch, quoteStatusFilter])
@@ -1396,11 +1410,13 @@ export default function SalesDashboard() {
     }
     setModalOpen(false)
     setEditLead(null)
+    setLeadForceView(false)
     loadLeads()
   }
 
   // Open confirmation — actual deletion happens in executeConfirmedAction below
   const handleDelete = (lead: Lead) => setConfirmState({ type: 'deleteLead', lead })
+  const handleBulkDelete = () => setConfirmState({ type: 'bulkDeleteLeads', ids: Array.from(selectedLeadIds) })
   const handleDeleteOpportunity = (opp: Opportunity) => setConfirmState({ type: 'deleteOpportunity', opp })
   const handleDeleteQuotation = (quote: Quotation) => setConfirmState({ type: 'deleteQuotation', quote })
   const handleConvert = (lead: Lead) => setConvertLeadTarget(lead)
@@ -1414,6 +1430,11 @@ export default function SalesDashboard() {
       if (confirmState.type === 'deleteLead') {
         await deleteLead(confirmState.lead.id)
         showToast('Lead deleted')
+        loadLeads()
+      } else if (confirmState.type === 'bulkDeleteLeads') {
+        await bulkDeleteLeads(confirmState.ids)
+        showToast(`${confirmState.ids.length} lead(s) deleted`)
+        setSelectedLeadIds(new Set())
         loadLeads()
       } else if (confirmState.type === 'deleteOpportunity') {
         await deleteOpportunity(confirmState.opp.id)
@@ -1558,7 +1579,7 @@ export default function SalesDashboard() {
               <div className="flex flex-wrap gap-3 items-center">
                 <SearchInput value={search} onChange={setSearch} placeholder="Search lead name, company, ID" />
                 <button
-                  onClick={() => { setEditLead(null); setModalOpen(true) }}
+                  onClick={() => { setEditLead(null); setLeadForceView(false); setModalOpen(true) }}
                   className="btn-primary gap-1.5 text-sm w-56 shrink-0"
                 >
                   <Plus className="w-4 h-4" /> Create Lead
@@ -1567,6 +1588,14 @@ export default function SalesDashboard() {
 
               {/* Actions */}
               <div className="flex gap-2">
+                {selectedLeadIds.size > 0 && (
+                  <button
+                    onClick={handleBulkDelete}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30 rounded-xl transition-all"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete Selected ({selectedLeadIds.size})
+                  </button>
+                )}
                 <button onClick={handleDownloadTemplate} className="btn-secondary gap-1.5 text-sm w-auto">
                   <Download className="w-4 h-4" /> Template
                 </button>
@@ -1612,7 +1641,22 @@ export default function SalesDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
-                    {['Lead ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Sales Rep', 'Status', 'Actions'].map(h => (
+                    <th className="px-4 py-3.5 w-10">
+                      {(() => {
+                        const manageable = leads.filter(l => canManage(l.salesRepId)).map(l => l.id)
+                        const allSelected = manageable.length > 0 && manageable.every(id => selectedLeadIds.has(id))
+                        return (
+                          <input
+                            type="checkbox"
+                            className="rounded border-slate-600 bg-slate-800"
+                            checked={allSelected}
+                            disabled={manageable.length === 0}
+                            onChange={e => setSelectedLeadIds(e.target.checked ? new Set(manageable) : new Set())}
+                          />
+                        )
+                      })()}
+                    </th>
+                    {['Lead ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Sales Rep', 'Status', 'Created', 'Updated', 'Created By', 'Updated By', 'Actions'].map(h => (
                       <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
                         ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
                     ))}
@@ -1620,17 +1664,31 @@ export default function SalesDashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
                   {leadsLoading ? (
-                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                       Loading leads...
                     </td></tr>
                   ) : leads.length === 0 ? (
-                    <tr><td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                       <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
                       No leads found. Create one or import from Excel.
                     </td></tr>
                   ) : leads.map(lead => (
-                    <tr key={lead.id} className="hover:bg-slate-800/40 transition-colors group">
+                    <tr key={lead.id} className="hover:bg-slate-800/40 transition-colors group cursor-pointer"
+                      onDoubleClick={() => { setEditLead(lead); setLeadForceView(true); setModalOpen(true) }}>
+                      <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          className="rounded border-slate-600 bg-slate-800"
+                          disabled={!canManage(lead.salesRepId)}
+                          checked={selectedLeadIds.has(lead.id)}
+                          onChange={e => setSelectedLeadIds(prev => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(lead.id); else next.delete(lead.id)
+                            return next
+                          })}
+                        />
+                      </td>
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{lead.leadId}</td>
                       <td className="px-4 py-3.5 font-medium text-white">{lead.leadName}</td>
                       <td className="px-4 py-3.5 text-slate-300">{lead.companyName || '—'}</td>
@@ -1642,12 +1700,21 @@ export default function SalesDashboard() {
                           {lead.status.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                      <td className="px-4 py-3.5 text-slate-400 text-xs whitespace-nowrap">{formatShortDate(lead.createdAt)}</td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs whitespace-nowrap">{formatShortDate(lead.updatedAt)}</td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">{lead.createdByName || '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">{lead.updatedByName || '—'}</td>
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors" onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
-                          <button onClick={() => { setEditLead(lead); setModalOpen(true) }}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-                            title={canManage(lead.salesRepId) ? 'Edit' : 'Assigned to another Sales Rep — View'}>
-                            {canManage(lead.salesRepId) ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          <button onClick={() => { setEditLead(lead); setLeadForceView(true); setModalOpen(true) }}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => { setEditLead(lead); setLeadForceView(false); setModalOpen(true) }}
+                            disabled={!canManage(lead.salesRepId)}
+                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                            title={canManage(lead.salesRepId) ? 'Edit' : 'Assigned to another Sales Rep'}>
+                            <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button onClick={() => handleDelete(lead)}
                             disabled={!canManage(lead.salesRepId)}
@@ -2072,7 +2139,8 @@ export default function SalesDashboard() {
           initial={editLead}
           salesReps={salesReps}
           onSave={handleSaveLead}
-          onClose={() => { setModalOpen(false); setEditLead(null) }}
+          forceView={leadForceView}
+          onClose={() => { setModalOpen(false); setEditLead(null); setLeadForceView(false) }}
         />
       )}
 
@@ -2157,17 +2225,20 @@ export default function SalesDashboard() {
         tone="danger"
         title={
           confirmState?.type === 'deleteLead' ? 'Delete Lead'
+          : confirmState?.type === 'bulkDeleteLeads' ? 'Delete Leads'
           : confirmState?.type === 'deleteOpportunity' ? 'Delete Opportunity'
           : 'Delete Quotation'
         }
         message={
           confirmState?.type === 'deleteLead'
             ? `Delete lead "${confirmState.lead.leadName}"? This action cannot be undone.`
-            : confirmState?.type === 'deleteOpportunity'
-              ? `Delete opportunity "${confirmState.opp.opportunityName}"? This action cannot be undone.`
-              : confirmState?.type === 'deleteQuotation'
-                ? `Delete quotation "${confirmState.quote.quotationNo}"? This action cannot be undone.`
-                : ''
+            : confirmState?.type === 'bulkDeleteLeads'
+              ? `Delete ${confirmState.ids.length} selected lead(s)? This action cannot be undone.`
+              : confirmState?.type === 'deleteOpportunity'
+                ? `Delete opportunity "${confirmState.opp.opportunityName}"? This action cannot be undone.`
+                : confirmState?.type === 'deleteQuotation'
+                  ? `Delete quotation "${confirmState.quote.quotationNo}"? This action cannot be undone.`
+                  : ''
         }
         confirmLabel="Delete"
         loading={confirmActionLoading}

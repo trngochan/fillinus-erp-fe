@@ -25,6 +25,9 @@ export interface Lead {
   salesRepName: string | null
   remark: string | null
   createdBy: number
+  createdByName: string | null
+  updatedBy: number | null
+  updatedByName: string | null
   createdAt: string
   updatedAt: string
 }
@@ -278,6 +281,9 @@ export const updateLead = (id: number, data: CreateLeadRequest) =>
 
 export const deleteLead = (id: number) =>
   api.delete<ApiResponse<null>>(`/leads/${id}`)
+
+export const bulkDeleteLeads = (ids: number[]) =>
+  api.post<ApiResponse<null>>('/leads/bulk-delete', ids)
 
 export const convertLead = (id: number, data: ConvertLeadRequest) =>
   api.post<ApiResponse<Opportunity>>(`/leads/${id}/convert`, data)
