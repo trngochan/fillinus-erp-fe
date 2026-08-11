@@ -101,5 +101,12 @@
            focus:outline-none focus:ring-2 focus:ring-slate-500
            flex items-center justify-center gap-2 whitespace-nowrap;
   }
+
+  /* ── Table cell text (Name/Company/Customer/...) ─────
+     Long free-text values in list tables get ellipsized instead of stretching the
+     column or wrapping the row taller — pair with a `title` attr for the full value. */
+  .cell-truncate {
+    @apply block max-w-[220px] truncate;
+  }
 }
 

@@ -5,8 +5,9 @@ import {
   Trash2, Edit2, ArrowRightCircle, Eye, Send,
   Briefcase, Users, FileText, X, Check, Loader2,
   Handshake, Trophy, History, ThumbsUp, ThumbsDown,
+  ChevronDown, ChevronRight, ExternalLink,
 } from 'lucide-react'
-import { getApiErrorMessage } from '@/api/axios'
+import { getApiErrorMessage, parseApiFieldErrors, matchErrorField } from '@/api/axios'
 import { useAuthStore } from '@/store/authStore'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import Pagination from '@/components/Pagination'
@@ -23,18 +24,19 @@ import type {
   CreateLeadRequest, ConvertLeadRequest, CreateOpportunityRequest,
   Quotation, QuotationCurrency, QuotationStatus, QuotationDetailRequest,
   CreateQuotationFromOpportunityRequest, UpdateQuotationRequest,
-  SalesRep, LeadSource,
+  SalesRep, LeadSource, LeadAccountType,
   DealNegotiation, CreateDealNegotiationRequest, UpdateDealNegotiationRequest, AddNegotiationHistoryRequest,
   DealResult, DealResultType, CreateDealResultRequest,
 } from '@/api/sales'
 import { COMMUNICATION_CHANNELS } from '@/api/sales'
 
-const LEAD_SOURCES: LeadSource[] = ['New Client', 'Existing Client', 'Referral', 'Digital Lead']
+const LEAD_SOURCES: LeadSource[] = ['Inbound', 'Outbound']
+const LEAD_ACCOUNT_TYPES: LeadAccountType[] = ['New', 'Existing']
 const PROJECT_TYPES = ['Agency', 'Label', 'Others'] as const
 const OPPORTUNITY_STAGES: OpportunityStage[] =
   ['PROSPECTING', 'QUALIFICATION', 'PROPOSAL', 'NEGOTIATION', 'CLOSED_WON', 'CLOSED_LOST']
 const CURRENCIES: QuotationCurrency[] = ['VND', 'USD']
-const LEAD_STATUSES: Lead['status'][] = ['NEW', 'IN_PROGRESS', 'QUALIFIED', 'REJECTED']
+const LEAD_STATUSES: Lead['status'][] = ['NEW', 'IN_PROGRESS', 'CLOSED']
 const QUOTATION_STATUSES: QuotationStatus[] = ['DRAFT', 'SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED']
 const DEAL_RESULTS: DealResultType[] = ['WON', 'LOST']
 
@@ -46,12 +48,45 @@ const formatStatusLabel = (value: string) =>
 const formatShortDate = (value: string) =>
   new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 
+/** Lead Contact — Social Link display: recognized platforms show a short name instead of the full URL. */
+const SOCIAL_PLATFORMS: Array<[RegExp, string]> = [
+  [/linkedin\.com/i, 'LinkedIn'],
+  [/facebook\.com|fb\.com/i, 'Facebook'],
+  [/instagram\.com/i, 'Instagram'],
+  [/(twitter\.com|x\.com)/i, 'X (Twitter)'],
+  [/tiktok\.com/i, 'TikTok'],
+  [/zalo\.me/i, 'Zalo'],
+  [/youtube\.com|youtu\.be/i, 'YouTube'],
+  [/t\.me|telegram\.me/i, 'Telegram'],
+  [/wa\.me|whatsapp\.com/i, 'WhatsApp'],
+]
+const normalizeSocialUrl = (url: string) => (/^https?:\/\//i.test(url) ? url : `https://${url}`)
+const detectSocialPlatform = (url: string): string => {
+  const known = SOCIAL_PLATFORMS.find(([re]) => re.test(url))
+  if (known) return known[1]
+  try {
+    return new URL(normalizeSocialUrl(url)).hostname.replace(/^www\./, '')
+  } catch {
+    return 'Link'
+  }
+}
+
 // ─── Status badge colours ──────────────────────────────────────
+/**
+ * BUG_FIX Lead V1.2 (Screen Item SAL001_CR_008): flags leads with an unclear source —
+ * both No -> red, only Digital=No -> green, only Referral=No -> orange, both Yes -> normal.
+ */
+const leadRowTextColor = (lead: Lead): string | null => {
+  if (!lead.isDigital && !lead.isReferral) return 'text-red-400'
+  if (!lead.isDigital) return 'text-green-400'
+  if (!lead.isReferral) return 'text-orange-400'
+  return null
+}
+
 const leadStatusColor: Record<string, string> = {
-  NEW:         'bg-blue-500/20 text-blue-300 border-blue-500/30',
-  IN_PROGRESS: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
-  QUALIFIED:   'bg-green-500/20 text-green-300 border-green-500/30',
-  REJECTED:    'bg-red-500/20 text-red-300 border-red-500/30',
+  NEW:         'bg-slate-500/20 text-slate-300 border-slate-500/30',
+  IN_PROGRESS: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  CLOSED:      'bg-red-500/20 text-red-400 border-red-500/30',
 }
 const stageColor: Record<string, string> = {
   PROSPECTING:  'bg-slate-500/20 text-slate-300 border-slate-500/30',
@@ -102,27 +137,54 @@ function LeadModal({
   const [form, setForm] = useState<CreateLeadRequest>({
     leadName:      initial?.leadName      ?? '',
     companyName:   initial?.companyName   ?? '',
-    contactPerson: initial?.contactPerson ?? '',
     phone:         initial?.phone         ?? '',
     email:         initial?.email         ?? '',
+    socialLink:    initial?.socialLink    ?? '',
     source:        initial?.source        ?? '',
+    accountType:   initial?.accountType   ?? '',
+    isDigital:     initial?.isDigital     ?? false,
+    isReferral:    initial?.isReferral    ?? false,
     salesRepId:    initial?.salesRepId    ?? user?.id,
     remark:        initial?.remark        ?? '',
-    status:        (initial?.status as 'NEW' | 'IN_PROGRESS' | 'REJECTED' | undefined) ?? undefined,
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [contactOpen, setContactOpen] = useState(false)
+
+  const validate = (): Record<string, string> => {
+    const errs: Record<string, string> = {}
+    if (!form.leadName.trim())      errs.leadName = 'Lead Name is required'
+    if (form.phone?.trim() && !/^(\+84|0)\d{9}$/.test(form.phone.trim()))
+      errs.phone = 'Phone must start with +84 or 0, followed by 9 digits'
+    if (form.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()))
+      errs.email = 'Invalid email format'
+    if (!form.phone?.trim() && !form.email?.trim() && !form.socialLink?.trim())
+      errs.contact = 'Please enter at least one contact method.'
+    if (!form.source)               errs.source = 'Source is required'
+    if (!form.accountType)          errs.accountType = 'Account Type is required'
+    if (!form.salesRepId)           errs.salesRepId = 'BD Representative is required'
+    return errs
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.leadName.trim())    { setError('Lead Name is required'); return }
-    if (!form.companyName?.trim()) { setError('Company is required'); return }
-    if (!form.phone?.trim())      { setError('Phone is required'); return }
-    if (!form.email?.trim())      { setError('Email is required'); return }
-    if (!form.salesRepId)         { setError('Sales Rep is required'); return }
+    const errs = validate()
+    setFieldErrors(errs)
+    if (errs.contact) setContactOpen(true)
+    if (Object.keys(errs).length > 0) return
     setSaving(true)
     try { await onSave(form) } catch (err: unknown) {
-      setError(getApiErrorMessage(err, 'Save failed'))
+      const msg = getApiErrorMessage(err, 'Save failed')
+      const parsed = parseApiFieldErrors(err)
+      if (parsed && Object.keys(parsed.flat).length > 0) {
+        setFieldErrors(prev => ({ ...prev, ...parsed.flat }))
+        setContactOpen(true)
+        return
+      }
+      const field = matchErrorField(msg, [[/at least one contact method/i, 'contact']])
+      if (field) { setFieldErrors(prev => ({ ...prev, [field]: msg })); setContactOpen(true) }
+      else setError(msg)
     } finally { setSaving(false) }
   }
 
@@ -143,11 +205,8 @@ function LeadModal({
             </p>
           )}
           {[
-            { label: 'Lead Name *', key: 'leadName',      type: 'text',  placeholder: 'Company contact name' },
-            { label: 'Company *',   key: 'companyName',   type: 'text',  placeholder: 'Company name' },
-            { label: 'Contact',     key: 'contactPerson', type: 'text',  placeholder: 'Contact person' },
-            { label: 'Phone *',     key: 'phone',         type: 'tel',   placeholder: '+84 xxx xxx xxx' },
-            { label: 'Email *',     key: 'email',         type: 'email', placeholder: 'contact@company.com' },
+            { label: 'Lead Name *', key: 'leadName',      type: 'text', placeholder: 'Key person name' },
+            { label: 'Company',     key: 'companyName',   type: 'text', placeholder: 'Company name' },
           ].map(f => (
             <div key={f.key}>
               <label className="form-label">{f.label}</label>
@@ -159,11 +218,64 @@ function LeadModal({
                 value={(form as unknown as Record<string, string>)[f.key] ?? ''}
                 onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
               />
+              {fieldErrors[f.key] && <p className="form-error">{fieldErrors[f.key]}</p>}
             </div>
           ))}
 
+          <div className="border border-white/10 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setContactOpen(prev => !prev)}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-slate-200 hover:bg-white/5 transition-colors"
+            >
+              <span>Contact <span className="text-slate-500 font-normal">(at least one required)</span></span>
+              {contactOpen ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+            </button>
+            {contactOpen && (
+              <div className="p-4 pt-1 space-y-4 border-t border-white/10">
+                <div>
+                  <label className="form-label">Phone</label>
+                  <input
+                    type="tel"
+                    placeholder="+84 xxx xxx xxx"
+                    disabled={!editable}
+                    className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                    value={form.phone ?? ''}
+                    onChange={e => setForm(prev => ({ ...prev, phone: e.target.value }))}
+                  />
+                  {fieldErrors.phone && <p className="form-error">{fieldErrors.phone}</p>}
+                </div>
+                <div>
+                  <label className="form-label">Email</label>
+                  <input
+                    type="email"
+                    placeholder="contact@company.com"
+                    disabled={!editable}
+                    className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                    value={form.email ?? ''}
+                    onChange={e => setForm(prev => ({ ...prev, email: e.target.value }))}
+                  />
+                  {fieldErrors.email && <p className="form-error">{fieldErrors.email}</p>}
+                </div>
+                <div>
+                  <label className="form-label">Social Link</label>
+                  <input
+                    type="text"
+                    placeholder="linkedin.com/in/johndoe"
+                    disabled={!editable}
+                    className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+                    value={form.socialLink ?? ''}
+                    onChange={e => setForm(prev => ({ ...prev, socialLink: e.target.value }))}
+                  />
+                  {fieldErrors.socialLink && <p className="form-error">{fieldErrors.socialLink}</p>}
+                </div>
+                {fieldErrors.contact && <p className="form-error">{fieldErrors.contact}</p>}
+              </div>
+            )}
+          </div>
+
           <div>
-            <label className="form-label">Source</label>
+            <label className="form-label">Source *</label>
             <select
               disabled={!editable}
               className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
@@ -173,38 +285,68 @@ function LeadModal({
               <option value="">— Select source —</option>
               {LEAD_SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
+            {fieldErrors.source && <p className="form-error">{fieldErrors.source}</p>}
           </div>
 
           <div>
-            <label className="form-label">Sales Rep *</label>
+            <label className="form-label">Account Type *</label>
+            <select
+              disabled={!editable}
+              className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
+              value={form.accountType ?? ''}
+              onChange={e => setForm(prev => ({ ...prev, accountType: e.target.value as LeadAccountType | '' }))}
+            >
+              <option value="">— Select account type —</option>
+              {LEAD_ACCOUNT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            {fieldErrors.accountType && <p className="form-error">{fieldErrors.accountType}</p>}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              id="lead-is-digital"
+              type="checkbox"
+              disabled={!editable}
+              className="rounded border-slate-600 bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
+              checked={form.isDigital}
+              onChange={e => setForm(prev => ({ ...prev, isDigital: e.target.checked }))}
+            />
+            <label htmlFor="lead-is-digital" className="form-label mb-0">Is this from Digital (Web/Social)?</label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              id="lead-is-referral"
+              type="checkbox"
+              disabled={!editable}
+              className="rounded border-slate-600 bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
+              checked={form.isReferral}
+              onChange={e => setForm(prev => ({ ...prev, isReferral: e.target.checked }))}
+            />
+            <label htmlFor="lead-is-referral" className="form-label mb-0">Is this from a Referral?</label>
+          </div>
+
+          <div>
+            <label className="form-label">BD Representative *</label>
             <select
               disabled={!editable}
               className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
               value={form.salesRepId ?? ''}
               onChange={e => setForm(prev => ({ ...prev, salesRepId: e.target.value ? Number(e.target.value) : undefined }))}
             >
-              <option value="">— Select Sales Rep —</option>
+              <option value="">— Select BD Representative —</option>
               {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
             </select>
+            {fieldErrors.salesRepId && <p className="form-error">{fieldErrors.salesRepId}</p>}
           </div>
 
           {initial && (
             <div>
               <label className="form-label">Status</label>
-              <select
-                className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
-                value={form.status ?? initial.status}
-                disabled={!editable || initial.status === 'QUALIFIED'}
-                onChange={e => setForm(prev => ({ ...prev, status: e.target.value as 'NEW' | 'IN_PROGRESS' | 'REJECTED' }))}
-              >
-                <option value="NEW">New</option>
-                <option value="IN_PROGRESS">In Progress</option>
-                <option value="REJECTED">Rejected</option>
-                {initial.status === 'QUALIFIED' && <option value="QUALIFIED">Qualified</option>}
-              </select>
-              {initial.status === 'QUALIFIED' && (
-                <p className="text-xs text-slate-500 mt-1">Qualified is set automatically by Convert — cannot be edited manually.</p>
-              )}
+              <span className={`inline-block text-xs font-medium px-2 py-1 rounded-lg border ${leadStatusColor[initial.status] ?? ''}`}>
+                {formatStatusLabel(initial.status)}
+              </span>
+              <p className="text-xs text-slate-500 mt-1">System-managed — New on create, In Progress on Convert, Closed once the deal is Won or Lost.</p>
             </div>
           )}
 
@@ -214,7 +356,7 @@ function LeadModal({
               disabled={!editable}
               className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
               rows={3}
-              placeholder="Notes about this lead..."
+              placeholder="Notes about this lead (e.g context of conversation, special requests, expectations, objections...)"
               value={form.remark ?? ''}
               onChange={e => setForm(prev => ({ ...prev, remark: e.target.value }))}
             />
@@ -261,6 +403,8 @@ function OpportunityModal({
   )
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [detailErrors, setDetailErrors] = useState<Record<number, { serviceProduct?: string; quantity?: string }>>({})
 
   // Locked once converted to a Quotation, or (View All, Edit Own) once assigned to another
   // Sales Rep — same read-only pattern as QuotationModal/DealNegotiationModal, so "view a
@@ -272,14 +416,27 @@ function OpportunityModal({
   const updateRow = (i: number, patch: Partial<OpportunityDetailRequest>) =>
     setDetails(prev => prev.map((d, idx) => idx === i ? { ...d, ...patch } : d))
 
+  const validate = () => {
+    const errs: Record<string, string> = {}
+    if (!form.opportunityName.trim()) errs.opportunityName = 'Opportunity Name is required'
+    if (!form.customer.trim())        errs.customer = 'Customer is required'
+    if (!form.salesRepId)             errs.salesRepId = 'Sales Rep is required'
+    const dErrs: Record<number, { serviceProduct?: string; quantity?: string }> = {}
+    details.forEach((d, i) => {
+      const rowErr: { serviceProduct?: string; quantity?: string } = {}
+      if (!d.serviceProduct.trim()) rowErr.serviceProduct = 'Required'
+      if (!d.quantity || d.quantity <= 0) rowErr.quantity = 'Must be > 0'
+      if (Object.keys(rowErr).length > 0) dErrs[i] = rowErr
+    })
+    return { errs, dErrs }
+  }
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.opportunityName.trim()) { setError('Opportunity Name is required'); return }
-    if (!form.customer.trim())        { setError('Customer is required'); return }
-    if (!form.salesRepId)             { setError('Sales Rep is required'); return }
-    if (details.some(d => !d.serviceProduct.trim() || !d.quantity || d.quantity <= 0)) {
-      setError('Every detail row needs a Service/Product and a Quantity greater than 0'); return
-    }
+    const { errs, dErrs } = validate()
+    setFieldErrors(errs)
+    setDetailErrors(dErrs)
+    if (Object.keys(errs).length > 0 || Object.keys(dErrs).length > 0) return
     setSaving(true)
     try {
       await onSave({
@@ -292,7 +449,20 @@ function OpportunityModal({
         details,
       })
     } catch (err: unknown) {
-      setError(getApiErrorMessage(err, 'Save failed'))
+      const msg = getApiErrorMessage(err, 'Save failed')
+      const parsed = parseApiFieldErrors(err)
+      if (parsed && (Object.keys(parsed.flat).length > 0 || Object.keys(parsed.detail).length > 0)) {
+        setFieldErrors(prev => ({ ...prev, ...parsed.flat }))
+        setDetailErrors(prev => {
+          const next = { ...prev }
+          for (const [idx, fields] of Object.entries(parsed.detail)) next[Number(idx)] = { ...next[Number(idx)], ...fields }
+          return next
+        })
+        return
+      }
+      const field = matchErrorField(msg, [[/^An Opportunity named/i, 'opportunityName']])
+      if (field) setFieldErrors(prev => ({ ...prev, [field]: msg }))
+      else setError(msg)
     } finally { setSaving(false) }
   }
 
@@ -320,11 +490,13 @@ function OpportunityModal({
               <label className="form-label">Opportunity Name *</label>
               <input type="text" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" value={form.opportunityName}
                 onChange={e => setForm(prev => ({ ...prev, opportunityName: e.target.value }))} />
+              {fieldErrors.opportunityName && <p className="form-error">{fieldErrors.opportunityName}</p>}
             </div>
             <div>
               <label className="form-label">Customer *</label>
               <input type="text" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed" placeholder="Customer / company name" value={form.customer}
                 onChange={e => setForm(prev => ({ ...prev, customer: e.target.value }))} />
+              {fieldErrors.customer && <p className="form-error">{fieldErrors.customer}</p>}
             </div>
             <div>
               <label className="form-label">Sales Rep *</label>
@@ -333,6 +505,7 @@ function OpportunityModal({
                 <option value="">— Select Sales Rep —</option>
                 {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
               </select>
+              {fieldErrors.salesRepId && <p className="form-error">{fieldErrors.salesRepId}</p>}
             </div>
             <div>
               <label className="form-label">Stage</label>
@@ -361,10 +534,16 @@ function OpportunityModal({
             <div className="space-y-2">
               {details.map((d, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-start bg-white/5 rounded-xl p-2.5">
-                  <input type="text" placeholder="Service/Product *" disabled={!editable} className="input-field col-span-4 py-2 text-sm disabled:opacity-60"
-                    value={d.serviceProduct} onChange={e => updateRow(i, { serviceProduct: e.target.value })} />
-                  <input type="number" min="0" step="0.01" placeholder="Qty" disabled={!editable} className="input-field col-span-2 py-2 text-sm disabled:opacity-60"
-                    value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                  <div className="col-span-4">
+                    <input type="text" placeholder="Service/Product *" disabled={!editable} className="input-field py-2 text-sm disabled:opacity-60 w-full"
+                      value={d.serviceProduct} onChange={e => updateRow(i, { serviceProduct: e.target.value })} />
+                    {detailErrors[i]?.serviceProduct && <p className="form-error">{detailErrors[i].serviceProduct}</p>}
+                  </div>
+                  <div className="col-span-2">
+                    <input type="number" min="0" step="0.01" placeholder="Qty" disabled={!editable} className="input-field py-2 text-sm disabled:opacity-60 w-full"
+                      value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                    {detailErrors[i]?.quantity && <p className="form-error">{detailErrors[i].quantity}</p>}
+                  </div>
                   <input type="text" placeholder="Unit" disabled={!editable} className="input-field col-span-2 py-2 text-sm disabled:opacity-60"
                     value={d.unit} onChange={e => updateRow(i, { unit: e.target.value })} />
                   <input type="text" placeholder="Remark" disabled={!editable} className="input-field col-span-3 py-2 text-sm disabled:opacity-60"
@@ -404,7 +583,7 @@ function ConvertLeadModal({
   onClose: () => void
 }) {
   const [form, setForm] = useState<Omit<ConvertLeadRequest, 'details'>>({
-    opportunityName: lead.leadName,
+    opportunityName: '',
     projectType: 'Agency',
     expectedDealValue: undefined,
     salesRepId: lead.salesRepId ?? undefined as unknown as number,
@@ -416,22 +595,50 @@ function ConvertLeadModal({
   )
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [detailErrors, setDetailErrors] = useState<Record<number, { serviceProduct?: string; quantity?: string }>>({})
 
   const addRow = () => setDetails(prev => [...prev, { serviceProduct: '', quantity: 1, unit: '', remark: '' }])
   const removeRow = (i: number) => setDetails(prev => prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev)
   const updateRow = (i: number, patch: Partial<OpportunityDetailRequest>) =>
     setDetails(prev => prev.map((d, idx) => idx === i ? { ...d, ...patch } : d))
 
+  const validate = () => {
+    const errs: Record<string, string> = {}
+    if (!form.opportunityName.trim()) errs.opportunityName = 'Opportunity Name is required'
+    if (!form.salesRepId)             errs.salesRepId = 'Sales Rep is required'
+    const dErrs: Record<number, { serviceProduct?: string; quantity?: string }> = {}
+    details.forEach((d, i) => {
+      const rowErr: { serviceProduct?: string; quantity?: string } = {}
+      if (!d.serviceProduct.trim()) rowErr.serviceProduct = 'Required'
+      if (!d.quantity || d.quantity <= 0) rowErr.quantity = 'Must be > 0'
+      if (Object.keys(rowErr).length > 0) dErrs[i] = rowErr
+    })
+    return { errs, dErrs }
+  }
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.opportunityName.trim()) { setError('Opportunity Name is required'); return }
-    if (!form.salesRepId)             { setError('Sales Rep is required'); return }
-    if (details.some(d => !d.serviceProduct.trim() || !d.quantity || d.quantity <= 0)) {
-      setError('Every detail row needs a Service/Product and a Quantity greater than 0'); return
-    }
+    const { errs, dErrs } = validate()
+    setFieldErrors(errs)
+    setDetailErrors(dErrs)
+    if (Object.keys(errs).length > 0 || Object.keys(dErrs).length > 0) return
     setSaving(true)
     try { await onConvert({ ...form, details }) } catch (err: unknown) {
-      setError(getApiErrorMessage(err, 'Conversion failed'))
+      const msg = getApiErrorMessage(err, 'Conversion failed')
+      const parsed = parseApiFieldErrors(err)
+      if (parsed && (Object.keys(parsed.flat).length > 0 || Object.keys(parsed.detail).length > 0)) {
+        setFieldErrors(prev => ({ ...prev, ...parsed.flat }))
+        setDetailErrors(prev => {
+          const next = { ...prev }
+          for (const [idx, fields] of Object.entries(parsed.detail)) next[Number(idx)] = { ...next[Number(idx)], ...fields }
+          return next
+        })
+        return
+      }
+      const field = matchErrorField(msg, [[/^An Opportunity named/i, 'opportunityName']])
+      if (field) setFieldErrors(prev => ({ ...prev, [field]: msg }))
+      else setError(msg)
     } finally { setSaving(false) }
   }
 
@@ -446,8 +653,9 @@ function ConvertLeadModal({
           {error && <div className="alert-error">{error}</div>}
           <div>
             <label className="form-label">Opportunity Name *</label>
-            <input type="text" className="input-field" value={form.opportunityName}
+            <input type="text" className="input-field" placeholder="Project Name_Service (e.g Coca Cola_TVC 60s)" value={form.opportunityName}
               onChange={e => setForm(prev => ({ ...prev, opportunityName: e.target.value }))} />
+            {fieldErrors.opportunityName && <p className="form-error">{fieldErrors.opportunityName}</p>}
           </div>
           <div>
             <label className="form-label">Project Type *</label>
@@ -462,12 +670,13 @@ function ConvertLeadModal({
               onChange={e => setForm(prev => ({ ...prev, expectedDealValue: e.target.value ? Number(e.target.value) : undefined }))} />
           </div>
           <div>
-            <label className="form-label">Sales Rep *</label>
+            <label className="form-label">BD Representative *</label>
             <select className="input-field" value={form.salesRepId ?? ''}
               onChange={e => setForm(prev => ({ ...prev, salesRepId: Number(e.target.value) }))}>
-              <option value="">— Select Sales Rep —</option>
+              <option value="">— Select BD Representative —</option>
               {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
             </select>
+            {fieldErrors.salesRepId && <p className="form-error">{fieldErrors.salesRepId}</p>}
           </div>
           <div>
             <label className="form-label">Stage</label>
@@ -490,10 +699,16 @@ function ConvertLeadModal({
             <div className="space-y-2">
               {details.map((d, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-start bg-white/5 rounded-xl p-2.5">
-                  <input type="text" placeholder="Service/Product *" className="input-field col-span-4 py-2 text-sm"
-                    value={d.serviceProduct} onChange={e => updateRow(i, { serviceProduct: e.target.value })} />
-                  <input type="number" min="0" step="0.01" placeholder="Qty" className="input-field col-span-2 py-2 text-sm"
-                    value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                  <div className="col-span-4">
+                    <input type="text" placeholder="Service/Product *" className="input-field py-2 text-sm w-full"
+                      value={d.serviceProduct} onChange={e => updateRow(i, { serviceProduct: e.target.value })} />
+                    {detailErrors[i]?.serviceProduct && <p className="form-error">{detailErrors[i].serviceProduct}</p>}
+                  </div>
+                  <div className="col-span-2">
+                    <input type="number" min="0" step="0.01" placeholder="Qty" className="input-field py-2 text-sm w-full"
+                      value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                    {detailErrors[i]?.quantity && <p className="form-error">{detailErrors[i].quantity}</p>}
+                  </div>
                   <input type="text" placeholder="Unit" className="input-field col-span-2 py-2 text-sm"
                     value={d.unit} onChange={e => updateRow(i, { unit: e.target.value })} />
                   <input type="text" placeholder="Remark" className="input-field col-span-3 py-2 text-sm"
@@ -535,6 +750,8 @@ function CreateQuotationModal({
   )
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [priceErrors, setPriceErrors] = useState<Record<number, string>>({})
 
   const setPrice = (detailId: number, patch: Partial<{ standardPrice: string; unitPrice: string }>) =>
     setPrices(prev => ({ ...prev, [detailId]: { ...prev[detailId], ...patch } }))
@@ -545,10 +762,16 @@ function CreateQuotationModal({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.expiredDate) { setError('Expired Date is required'); return }
-    if (opportunity.details.some(d => prices[d.id]?.unitPrice === '' || Number(prices[d.id]?.unitPrice) < 0)) {
-      setError('Enter a Unit Price (>= 0) for every detail line'); return
-    }
+    const errs: Record<string, string> = {}
+    if (!form.expiredDate) errs.expiredDate = 'Expired Date is required'
+    const pErrs: Record<number, string> = {}
+    opportunity.details.forEach(d => {
+      const v = prices[d.id]?.unitPrice
+      if (v === '' || v === undefined || Number(v) < 0) pErrs[d.id] = 'Unit Price is required (>= 0)'
+    })
+    setFieldErrors(errs)
+    setPriceErrors(pErrs)
+    if (Object.keys(errs).length > 0 || Object.keys(pErrs).length > 0) return
     setSaving(true)
     try {
       await onCreate({
@@ -560,7 +783,16 @@ function CreateQuotationModal({
         })),
       })
     } catch (err: unknown) {
-      setError(getApiErrorMessage(err, 'Failed to create quotation'))
+      const msg = getApiErrorMessage(err, 'Failed to create quotation')
+      const parsed = parseApiFieldErrors(err)
+      if (parsed && Object.keys(parsed.flat).length > 0) {
+        setFieldErrors(prev => ({ ...prev, ...parsed.flat }))
+        return
+      }
+      const missingPriceMatch = msg.match(/^Missing Unit Price for detail line: (.+)$/)
+      const missingDetail = missingPriceMatch && opportunity.details.find(d => d.serviceProduct === missingPriceMatch[1])
+      if (missingDetail) setPriceErrors(prev => ({ ...prev, [missingDetail.id]: msg }))
+      else setError(msg)
     } finally { setSaving(false) }
   }
 
@@ -580,6 +812,7 @@ function CreateQuotationModal({
             <label className="form-label">Expired Date *</label>
             <input type="date" className="input-field" value={form.expiredDate}
               onChange={e => setForm(prev => ({ ...prev, expiredDate: e.target.value }))} />
+            {fieldErrors.expiredDate && <p className="form-error">{fieldErrors.expiredDate}</p>}
           </div>
           <div>
             <label className="form-label">Currency</label>
@@ -603,8 +836,11 @@ function CreateQuotationModal({
                   <div className="col-span-2 text-sm text-slate-400 tabular-nums">{d.quantity} {d.unit ?? ''}</div>
                   <input type="number" min="0" step="0.01" placeholder="Std Price" className="input-field col-span-2 py-2 text-sm"
                     value={prices[d.id]?.standardPrice ?? ''} onChange={e => setPrice(d.id, { standardPrice: e.target.value })} />
-                  <input type="number" min="0" step="0.01" placeholder="Unit Price *" className="input-field col-span-2 py-2 text-sm"
-                    value={prices[d.id]?.unitPrice ?? ''} onChange={e => setPrice(d.id, { unitPrice: e.target.value })} />
+                  <div className="col-span-2">
+                    <input type="number" min="0" step="0.01" placeholder="Unit Price *" className="input-field py-2 text-sm w-full"
+                      value={prices[d.id]?.unitPrice ?? ''} onChange={e => setPrice(d.id, { unitPrice: e.target.value })} />
+                    {priceErrors[d.id] && <p className="form-error">{priceErrors[d.id]}</p>}
+                  </div>
                   <div className="col-span-2 text-sm text-slate-300 tabular-nums text-right pr-1">
                     {(d.quantity * (Number(prices[d.id]?.unitPrice) || 0)).toLocaleString('en-US')}
                   </div>
@@ -660,6 +896,8 @@ function QuotationModal({
   )
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [detailErrors, setDetailErrors] = useState<Record<number, { productService?: string; quantity?: string }>>({})
 
   const totalAmount = details.reduce((sum, d) => sum + (d.quantity || 0) * (d.unitPrice || 0), 0)
 
@@ -670,14 +908,35 @@ function QuotationModal({
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (details.some(d => !d.productService.trim() || !d.quantity || d.quantity <= 0)) {
-      setError('Every detail row needs a Product/Service and a Quantity greater than 0'); return
-    }
+    const errs: Record<string, string> = {}
+    if (!form.quotationDate) errs.quotationDate = 'Quotation Date is required'
+    if (!form.expiredDate)   errs.expiredDate = 'Expired Date is required'
+    const dErrs: Record<number, { productService?: string; quantity?: string }> = {}
+    details.forEach((d, i) => {
+      const rowErr: { productService?: string; quantity?: string } = {}
+      if (!d.productService.trim()) rowErr.productService = 'Required'
+      if (!d.quantity || d.quantity <= 0) rowErr.quantity = 'Must be > 0'
+      if (Object.keys(rowErr).length > 0) dErrs[i] = rowErr
+    })
+    setFieldErrors(errs)
+    setDetailErrors(dErrs)
+    if (Object.keys(errs).length > 0 || Object.keys(dErrs).length > 0) return
     setSaving(true)
     try {
       await onSave({ ...form, details })
     } catch (err: unknown) {
-      setError(getApiErrorMessage(err, 'Save failed'))
+      const msg = getApiErrorMessage(err, 'Save failed')
+      const parsed = parseApiFieldErrors(err)
+      if (parsed && (Object.keys(parsed.flat).length > 0 || Object.keys(parsed.detail).length > 0)) {
+        setFieldErrors(prev => ({ ...prev, ...parsed.flat }))
+        setDetailErrors(prev => {
+          const next = { ...prev }
+          for (const [idx, fields] of Object.entries(parsed.detail)) next[Number(idx)] = { ...next[Number(idx)], ...fields }
+          return next
+        })
+        return
+      }
+      setError(msg)
     } finally { setSaving(false) }
   }
 
@@ -706,11 +965,13 @@ function QuotationModal({
               <label className="form-label">Quotation Date *</label>
               <input type="date" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
                 value={form.quotationDate} onChange={e => setForm(prev => ({ ...prev, quotationDate: e.target.value }))} />
+              {fieldErrors.quotationDate && <p className="form-error">{fieldErrors.quotationDate}</p>}
             </div>
             <div>
               <label className="form-label">Expired Date *</label>
               <input type="date" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
                 value={form.expiredDate} onChange={e => setForm(prev => ({ ...prev, expiredDate: e.target.value }))} />
+              {fieldErrors.expiredDate && <p className="form-error">{fieldErrors.expiredDate}</p>}
             </div>
             <div>
               <label className="form-label">Currency</label>
@@ -734,10 +995,16 @@ function QuotationModal({
             <div className="space-y-2">
               {details.map((d, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-start bg-white/5 rounded-xl p-2.5">
-                  <input type="text" placeholder="Product/Service *" disabled={!editable} className="input-field col-span-3 py-2 text-sm disabled:opacity-60"
-                    value={d.productService} onChange={e => updateRow(i, { productService: e.target.value })} />
-                  <input type="number" min="0" step="0.01" placeholder="Qty" disabled={!editable} className="input-field col-span-1 py-2 text-sm disabled:opacity-60"
-                    value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                  <div className="col-span-3">
+                    <input type="text" placeholder="Product/Service *" disabled={!editable} className="input-field py-2 text-sm disabled:opacity-60 w-full"
+                      value={d.productService} onChange={e => updateRow(i, { productService: e.target.value })} />
+                    {detailErrors[i]?.productService && <p className="form-error">{detailErrors[i].productService}</p>}
+                  </div>
+                  <div className="col-span-1">
+                    <input type="number" min="0" step="0.01" placeholder="Qty" disabled={!editable} className="input-field py-2 text-sm disabled:opacity-60 w-full"
+                      value={d.quantity} onChange={e => updateRow(i, { quantity: Number(e.target.value) })} />
+                    {detailErrors[i]?.quantity && <p className="form-error">{detailErrors[i].quantity}</p>}
+                  </div>
                   <input type="text" placeholder="Unit" disabled={!editable} className="input-field col-span-1 py-2 text-sm disabled:opacity-60"
                     value={d.unit} onChange={e => updateRow(i, { unit: e.target.value })} />
                   <input type="number" min="0" step="0.01" placeholder="Std Price" disabled={!editable} className="input-field col-span-2 py-2 text-sm disabled:opacity-60"
@@ -796,20 +1063,32 @@ function CreateDealNegotiationModal({
   })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.meetingDate)             { setError('Meeting Date is required'); return }
-    if (!form.communicationChannel)    { setError('Communication Channel is required'); return }
-    if (!form.discussion.trim())       { setError('Discussion is required'); return }
+    const errs: Record<string, string> = {}
+    if (!form.meetingDate)          errs.meetingDate = 'Meeting Date is required'
+    if (!form.communicationChannel) errs.communicationChannel = 'Communication Channel is required'
+    if (!form.discussion.trim())    errs.discussion = 'Discussion is required'
     if (form.nextFollowUpDate && form.nextFollowUpDate < form.meetingDate) {
-      setError('Next Follow-up Date must be on or after Meeting Date'); return
+      errs.nextFollowUpDate = 'Must be on or after Meeting Date'
     }
+    setFieldErrors(errs)
+    if (Object.keys(errs).length > 0) return
     setSaving(true)
     try {
       await onCreate({ ...form, nextFollowUpDate: form.nextFollowUpDate || undefined })
     } catch (err: unknown) {
-      setError(getApiErrorMessage(err, 'Failed to create Deal Negotiation'))
+      const msg = getApiErrorMessage(err, 'Failed to create Deal Negotiation')
+      const parsed = parseApiFieldErrors(err)
+      if (parsed && Object.keys(parsed.flat).length > 0) {
+        setFieldErrors(prev => ({ ...prev, ...parsed.flat }))
+        return
+      }
+      const field = matchErrorField(msg, [[/Next Follow-up Date/i, 'nextFollowUpDate']])
+      if (field) setFieldErrors(prev => ({ ...prev, [field]: msg }))
+      else setError(msg)
     } finally { setSaving(false) }
   }
 
@@ -830,6 +1109,7 @@ function CreateDealNegotiationModal({
               <label className="form-label">Meeting Date *</label>
               <input type="date" className="input-field" value={form.meetingDate}
                 onChange={e => setForm(prev => ({ ...prev, meetingDate: e.target.value }))} />
+              {fieldErrors.meetingDate && <p className="form-error">{fieldErrors.meetingDate}</p>}
             </div>
             <div>
               <label className="form-label">Communication Channel *</label>
@@ -837,6 +1117,7 @@ function CreateDealNegotiationModal({
                 onChange={e => setForm(prev => ({ ...prev, communicationChannel: e.target.value }))}>
                 {COMMUNICATION_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+              {fieldErrors.communicationChannel && <p className="form-error">{fieldErrors.communicationChannel}</p>}
             </div>
             <div className="col-span-2">
               <label className="form-label">Contact Person</label>
@@ -856,6 +1137,7 @@ function CreateDealNegotiationModal({
               <label className="form-label">Discussion *</label>
               <textarea className="input-field" rows={2} placeholder="What was discussed with the customer?" value={form.discussion}
                 onChange={e => setForm(prev => ({ ...prev, discussion: e.target.value }))} />
+              {fieldErrors.discussion && <p className="form-error">{fieldErrors.discussion}</p>}
             </div>
             <div>
               <label className="form-label">Customer Feedback</label>
@@ -872,6 +1154,7 @@ function CreateDealNegotiationModal({
                 <label className="form-label">Next Follow-up Date</label>
                 <input type="date" className="input-field" value={form.nextFollowUpDate}
                   onChange={e => setForm(prev => ({ ...prev, nextFollowUpDate: e.target.value }))} />
+                {fieldErrors.nextFollowUpDate && <p className="form-error">{fieldErrors.nextFollowUpDate}</p>}
               </div>
             </div>
           </div>
@@ -911,14 +1194,18 @@ function DealNegotiationModal({
   const [newHistory, setNewHistory] = useState({ discussion: '', customerFeedback: '', nextAction: '', nextFollowUpDate: '' })
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!form.meetingDate)          { setError('Meeting Date is required'); return }
-    if (!form.communicationChannel) { setError('Communication Channel is required'); return }
+    const errs: Record<string, string> = {}
+    if (!form.meetingDate)          errs.meetingDate = 'Meeting Date is required'
+    if (!form.communicationChannel) errs.communicationChannel = 'Communication Channel is required'
     if (newHistory.nextFollowUpDate && newHistory.nextFollowUpDate < form.meetingDate) {
-      setError('Next Follow-up Date must be on or after Meeting Date'); return
+      errs.nextFollowUpDate = 'Must be on or after Meeting Date'
     }
+    setFieldErrors(errs)
+    if (Object.keys(errs).length > 0) return
     setSaving(true)
     try {
       await onSaveHeader(form)
@@ -927,7 +1214,15 @@ function DealNegotiationModal({
       }
       setNewHistory({ discussion: '', customerFeedback: '', nextAction: '', nextFollowUpDate: '' })
     } catch (err: unknown) {
-      setError(getApiErrorMessage(err, 'Save failed'))
+      const msg = getApiErrorMessage(err, 'Save failed')
+      const parsed = parseApiFieldErrors(err)
+      if (parsed && Object.keys(parsed.flat).length > 0) {
+        setFieldErrors(prev => ({ ...prev, ...parsed.flat }))
+        return
+      }
+      const field = matchErrorField(msg, [[/Next Follow-up Date/i, 'nextFollowUpDate']])
+      if (field) setFieldErrors(prev => ({ ...prev, [field]: msg }))
+      else setError(msg)
     } finally { setSaving(false) }
   }
 
@@ -956,6 +1251,7 @@ function DealNegotiationModal({
               <label className="form-label">Meeting Date *</label>
               <input type="date" disabled={!editable} className="input-field disabled:opacity-60 disabled:cursor-not-allowed"
                 value={form.meetingDate} onChange={e => setForm(prev => ({ ...prev, meetingDate: e.target.value }))} />
+              {fieldErrors.meetingDate && <p className="form-error">{fieldErrors.meetingDate}</p>}
             </div>
             <div>
               <label className="form-label">Communication Channel *</label>
@@ -965,6 +1261,7 @@ function DealNegotiationModal({
                 {!COMMUNICATION_CHANNELS.includes(form.communicationChannel as typeof COMMUNICATION_CHANNELS[number]) &&
                   <option value={form.communicationChannel}>{form.communicationChannel}</option>}
               </select>
+              {fieldErrors.communicationChannel && <p className="form-error">{fieldErrors.communicationChannel}</p>}
             </div>
             <div>
               <label className="form-label">Contact Person</label>
@@ -1024,6 +1321,7 @@ function DealNegotiationModal({
                   <label className="form-label">Next Follow-up Date</label>
                   <input type="date" className="input-field" value={newHistory.nextFollowUpDate}
                     onChange={e => setNewHistory(prev => ({ ...prev, nextFollowUpDate: e.target.value }))} />
+                  {fieldErrors.nextFollowUpDate && <p className="form-error">{fieldErrors.nextFollowUpDate}</p>}
                 </div>
               </div>
             </div>
@@ -1061,11 +1359,12 @@ function DealResultModal({
   const [confirming, setConfirming] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error,  setError]  = useState('')
+  const [resultError, setResultError] = useState('')
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!result) { setError('Select Won or Lost before saving'); return }
-    setError('')
+    if (!result) { setResultError('Select Won or Lost before saving'); return }
+    setResultError('')
     setConfirming(true)
   }
 
@@ -1122,17 +1421,18 @@ function DealResultModal({
             <div>
               <label className="form-label">Deal Result *</label>
               <div className="flex gap-3">
-                <button type="button" onClick={() => setResult('WON')}
+                <button type="button" onClick={() => { setResult('WON'); setResultError('') }}
                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-medium transition-all
                     ${result === 'WON' ? 'bg-green-500/20 text-green-300 border-green-500/40' : 'bg-white/5 text-slate-400 border-slate-700 hover:border-slate-600'}`}>
                   <ThumbsUp className="w-4 h-4" /> Won
                 </button>
-                <button type="button" onClick={() => setResult('LOST')}
+                <button type="button" onClick={() => { setResult('LOST'); setResultError('') }}
                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-medium transition-all
                     ${result === 'LOST' ? 'bg-red-500/20 text-red-300 border-red-500/40' : 'bg-white/5 text-slate-400 border-slate-700 hover:border-slate-600'}`}>
                   <ThumbsDown className="w-4 h-4" /> Lost
                 </button>
               </div>
+              {resultError && <p className="form-error">{resultError}</p>}
             </div>
 
             <div>
@@ -1572,7 +1872,7 @@ export default function SalesDashboard() {
       {/* ── LEAD TAB ─────────────────────────────────────────────── */}
       {activeTab === 'leads' && (
         <div className="max-w-7xl mx-auto px-6 pb-10 pt-6 space-y-5">
-          <h1 className="text-xl font-bold text-white tracking-wide">LEAD MANAGEMENT</h1>
+          <h1 className="text-xl font-bold text-white tracking-wide">LEADS MANAGEMENT</h1>
           {/* Toolbar */}
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3 items-center justify-between">
@@ -1624,9 +1924,9 @@ export default function SalesDashboard() {
               <select
                 value={leadSalesRepFilter}
                 onChange={e => setLeadSalesRepFilter(e.target.value)}
-                className="input-field py-2.5 pr-8 w-56 shrink-0"
+                className="input-field py-2.5 pr-8 w-64 shrink-0"
               >
-                <option value="ALL">All Sales Reps</option>
+                <option value="ALL">All BD Representatives</option>
                 {salesReps.map(r => <option key={r.id} value={r.id}>{r.fullName}</option>)}
               </select>
               <button onClick={loadLeads} className="btn-icon" title="Refresh">
@@ -1637,11 +1937,11 @@ export default function SalesDashboard() {
 
           {/* Table */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[65vh]">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
-                    <th className="px-4 py-3.5 w-10">
+                    <th className="px-4 py-3.5 w-10 sticky top-0 z-20 bg-slate-800">
                       {(() => {
                         const manageable = leads.filter(l => canManage(l.salesRepId)).map(l => l.id)
                         const allSelected = manageable.length > 0 && manageable.every(id => selectedLeadIds.has(id))
@@ -1656,24 +1956,26 @@ export default function SalesDashboard() {
                         )
                       })()}
                     </th>
-                    {['Lead ID', 'Lead Name', 'Company', 'Contact', 'Phone', 'Sales Rep', 'Status', 'Created', 'Updated', 'Created By', 'Updated By', 'Actions'].map(h => (
-                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
-                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                    {['Lead ID', 'Lead Name', 'Company', 'Phone', 'Email', 'Social Link', 'Account Type', 'BD Representative', 'Status', 'Created', 'Updated', 'Created By', 'Updated By', 'Actions'].map(h => (
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-slate-800
+                        ${h === 'Actions' ? 'right-0 z-30' : 'z-20'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
                   {leadsLoading ? (
-                    <tr><td colSpan={13} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={15} className="px-4 py-12 text-center text-slate-500">
                       <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
                       Loading leads...
                     </td></tr>
                   ) : leads.length === 0 ? (
-                    <tr><td colSpan={13} className="px-4 py-12 text-center text-slate-500">
+                    <tr><td colSpan={15} className="px-4 py-12 text-center text-slate-500">
                       <Users className="w-10 h-10 mx-auto mb-3 opacity-30" />
                       No leads found. Create one or import from Excel.
                     </td></tr>
-                  ) : leads.map(lead => (
+                  ) : leads.map(lead => {
+                    const rowColor = leadRowTextColor(lead)
+                    return (
                     <tr key={lead.id} className="hover:bg-slate-800/40 transition-colors group cursor-pointer"
                       onDoubleClick={() => { setEditLead(lead); setLeadForceView(true); setModalOpen(true) }}>
                       <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
@@ -1689,51 +1991,73 @@ export default function SalesDashboard() {
                           })}
                         />
                       </td>
-                      <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{lead.leadId}</td>
-                      <td className="px-4 py-3.5 font-medium text-white">{lead.leadName}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{lead.companyName || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{lead.contactPerson || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{lead.phone || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{lead.salesRepName || '—'}</td>
+                      <td className={`px-4 py-3.5 font-mono text-xs whitespace-nowrap ${rowColor ?? 'text-slate-400'}`}>{lead.leadId}</td>
+                      <td className={`px-4 py-3.5 font-medium ${rowColor ?? 'text-white'}`}><span className="cell-truncate" title={lead.leadName}>{lead.leadName}</span></td>
+                      <td className={`px-4 py-3.5 ${rowColor ?? 'text-slate-300'}`}><span className="cell-truncate" title={lead.companyName ?? ''}>{lead.companyName || '—'}</span></td>
+                      <td className={`px-4 py-3.5 ${rowColor ?? 'text-slate-300'}`}>{lead.phone || '—'}</td>
+                      <td className={`px-4 py-3.5 ${rowColor ?? 'text-slate-300'}`}><span className="cell-truncate" title={lead.email ?? ''}>{lead.email || '—'}</span></td>
                       <td className="px-4 py-3.5">
-                        <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${leadStatusColor[lead.status] ?? ''}`}>
+                        {lead.socialLink ? (
+                          <a
+                            href={normalizeSocialUrl(lead.socialLink)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 text-brand-400 hover:text-brand-300 hover:underline transition-colors"
+                            title={lead.socialLink}
+                          >
+                            <span className="truncate max-w-[140px]">{detectSocialPlatform(lead.socialLink)}</span>
+                            <ExternalLink className="w-3 h-3 shrink-0" />
+                          </a>
+                        ) : (
+                          <span className={rowColor ?? 'text-slate-300'}>—</span>
+                        )}
+                      </td>
+                      <td className={`px-4 py-3.5 ${rowColor ?? 'text-slate-300'}`}>{lead.accountType}</td>
+                      <td className={`px-4 py-3.5 ${rowColor ?? 'text-slate-300'}`}><span className="cell-truncate" title={lead.salesRepName ?? ''}>{lead.salesRepName || '—'}</span></td>
+                      <td className="px-4 py-3.5">
+                        <span className={`text-xs font-medium px-2 py-1 rounded-lg border whitespace-nowrap ${leadStatusColor[lead.status] ?? ''}`}>
                           {lead.status.replace('_', ' ')}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-400 text-xs whitespace-nowrap">{formatShortDate(lead.createdAt)}</td>
-                      <td className="px-4 py-3.5 text-slate-400 text-xs whitespace-nowrap">{formatShortDate(lead.updatedAt)}</td>
-                      <td className="px-4 py-3.5 text-slate-400 text-xs">{lead.createdByName || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-400 text-xs">{lead.updatedByName || '—'}</td>
-                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors" onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
+                      <td className={`px-4 py-3.5 text-xs whitespace-nowrap ${rowColor ?? 'text-slate-400'}`}>{formatShortDate(lead.createdAt)}</td>
+                      <td className={`px-4 py-3.5 text-xs whitespace-nowrap ${rowColor ?? 'text-slate-400'}`}>{formatShortDate(lead.updatedAt)}</td>
+                      <td className={`px-4 py-3.5 text-xs ${rowColor ?? 'text-slate-400'}`}><span className="cell-truncate" title={lead.createdByName ?? ''}>{lead.createdByName || '—'}</span></td>
+                      <td className={`px-4 py-3.5 text-xs ${rowColor ?? 'text-slate-400'}`}><span className="cell-truncate" title={lead.updatedByName ?? ''}>{lead.updatedByName || '—'}</span></td>
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800 transition-colors" onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           <button onClick={() => { setEditLead(lead); setLeadForceView(true); setModalOpen(true) }}
                             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">
                             <Eye className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => { setEditLead(lead); setLeadForceView(false); setModalOpen(true) }}
-                            disabled={!canManage(lead.salesRepId)}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={canManage(lead.salesRepId) ? 'Edit' : 'Assigned to another Sales Rep'}>
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleDelete(lead)}
-                            disabled={!canManage(lead.salesRepId)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed" title="Delete">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleConvert(lead)}
-                            disabled={lead.status === 'REJECTED' || !canManage(lead.salesRepId)}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            title="Convert to Opportunity"
-                          >
-                            <ArrowRightCircle className="w-3.5 h-3.5" />
-                            Convert
-                          </button>
+                          {canManage(lead.salesRepId) && (
+                            <button onClick={() => { setEditLead(lead); setLeadForceView(false); setModalOpen(true) }}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManage(lead.salesRepId) && (
+                            <button onClick={() => handleDelete(lead)}
+                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all" title="Delete">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManage(lead.salesRepId) && (
+                            <button
+                              onClick={() => handleConvert(lead)}
+                              disabled={lead.status === 'CLOSED'}
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={lead.status === 'CLOSED' ? 'Closed leads cannot be converted' : 'Convert to Opportunity'}
+                            >
+                              <ArrowRightCircle className="w-3.5 h-3.5" />
+                              Convert
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1766,13 +2090,13 @@ export default function SalesDashboard() {
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[65vh]">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
                     {['Opp ID', 'Name', 'Lead', 'Customer', 'Sales Rep', 'Stage', 'Expected Revenue', 'Status', 'Actions'].map(h => (
-                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
-                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-slate-800
+                        ${h === 'Actions' ? 'right-0 z-30' : 'z-20'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1790,10 +2114,10 @@ export default function SalesDashboard() {
                   ) : opps.map(opp => (
                     <tr key={opp.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{opp.opportunityId}</td>
-                      <td className="px-4 py-3.5 font-medium text-white">{opp.opportunityName}</td>
-                      <td className="px-4 py-3.5 text-slate-400 text-xs">{opp.leadName || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{opp.customer}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{opp.salesRepName || '—'}</td>
+                      <td className="px-4 py-3.5 font-medium text-white"><span className="cell-truncate" title={opp.opportunityName}>{opp.opportunityName}</span></td>
+                      <td className="px-4 py-3.5 text-slate-400 text-xs"><span className="cell-truncate" title={opp.leadName ?? ''}>{opp.leadName || '—'}</span></td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={opp.customer}>{opp.customer}</span></td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={opp.salesRepName ?? ''}>{opp.salesRepName || '—'}</span></td>
                       <td className="px-4 py-3.5">
                         <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${stageColor[opp.stage] ?? ''}`}>
                           {opp.stage.replace('_', ' ')}
@@ -1807,28 +2131,39 @@ export default function SalesDashboard() {
                           {opp.lifecycleStatus}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800 transition-colors">
                         <div className="flex items-center gap-1">
-                          <button onClick={() => { setEditOpp(opp); setOppModalOpen(true) }}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-                            title={opp.hasQuotation ? 'Already converted to Quotation — View' : canManage(opp.salesRepId) ? 'Edit' : 'Assigned to another Sales Rep — View'}>
-                            {opp.hasQuotation || !canManage(opp.salesRepId) ? <Eye className="w-3.5 h-3.5" /> : <Edit2 className="w-3.5 h-3.5" />}
-                          </button>
-                          <button onClick={() => handleDeleteOpportunity(opp)}
-                            disabled={opp.hasQuotation || !canManage(opp.salesRepId)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={opp.hasQuotation ? 'Already converted to Quotation — locked' : 'Delete'}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setCreateQuoteForOpp(opp)}
-                            disabled={opp.hasQuotation || !canManage(opp.salesRepId)}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            title={opp.hasQuotation ? 'Already has a Quotation' : 'Create Quotation'}
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            Quote
-                          </button>
+                          {(opp.hasQuotation || !canManage(opp.salesRepId)) && (
+                            <button onClick={() => { setEditOpp(opp); setOppModalOpen(true) }}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {!opp.hasQuotation && canManage(opp.salesRepId) && (
+                            <button onClick={() => { setEditOpp(opp); setOppModalOpen(true) }}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManage(opp.salesRepId) && (
+                            <button onClick={() => handleDeleteOpportunity(opp)}
+                              disabled={opp.hasQuotation}
+                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                              title={opp.hasQuotation ? 'Already converted to Quotation — locked' : 'Delete'}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManage(opp.salesRepId) && (
+                            <button
+                              onClick={() => setCreateQuoteForOpp(opp)}
+                              disabled={opp.hasQuotation}
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={opp.hasQuotation ? 'Already has a Quotation' : 'Create Quotation'}
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              Quote
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1874,13 +2209,13 @@ export default function SalesDashboard() {
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[65vh]">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
                     {['Quotation No', 'Opportunity', 'Customer', 'Quotation Date', 'Expired Date', 'Total Amount', 'Status', 'Actions'].map(h => (
-                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
-                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-slate-800
+                        ${h === 'Actions' ? 'right-0 z-30' : 'z-20'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -1898,8 +2233,8 @@ export default function SalesDashboard() {
                   ) : quotes.map(quote => (
                     <tr key={quote.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{quote.quotationNo}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{quote.opportunityName || '—'}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{quote.customer}</td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={quote.opportunityName ?? ''}>{quote.opportunityName || '—'}</span></td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={quote.customer}>{quote.customer}</span></td>
                       <td className="px-4 py-3.5 text-slate-400 text-xs">
                         {new Date(quote.quotationDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </td>
@@ -1914,28 +2249,39 @@ export default function SalesDashboard() {
                           {quote.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800 transition-colors">
                         <div className="flex items-center gap-1">
-                          <button onClick={() => { setEditQuote(quote); setQuoteModalOpen(true) }}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-                            title={quote.status === 'DRAFT' && canManage(quote.salesRepId) ? 'Edit' : 'View'}>
-                            {quote.status === 'DRAFT' && canManage(quote.salesRepId) ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          </button>
-                          <button onClick={() => handleDeleteQuotation(quote)}
-                            disabled={quote.status !== 'DRAFT' || !canManage(quote.salesRepId)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                            title={quote.status !== 'DRAFT' ? 'Only a Draft quotation can be deleted' : 'Delete'}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => setNegotiateForQuote(quote)}
-                            disabled={quote.status !== 'DRAFT' || !canManage(quote.salesRepId)}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            title="Create Deal Negotiation"
-                          >
-                            <Send className="w-3.5 h-3.5" />
-                            Negotiate
-                          </button>
+                          {(quote.status !== 'DRAFT' || !canManage(quote.salesRepId)) && (
+                            <button onClick={() => { setEditQuote(quote); setQuoteModalOpen(true) }}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {quote.status === 'DRAFT' && canManage(quote.salesRepId) && (
+                            <button onClick={() => { setEditQuote(quote); setQuoteModalOpen(true) }}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManage(quote.salesRepId) && (
+                            <button onClick={() => handleDeleteQuotation(quote)}
+                              disabled={quote.status !== 'DRAFT'}
+                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                              title={quote.status !== 'DRAFT' ? 'Only a Draft quotation can be deleted' : 'Delete'}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManage(quote.salesRepId) && (
+                            <button
+                              onClick={() => setNegotiateForQuote(quote)}
+                              disabled={quote.status !== 'DRAFT'}
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={quote.status !== 'DRAFT' ? 'Only a Draft quotation can move to negotiation' : 'Create Deal Negotiation'}
+                            >
+                              <Send className="w-3.5 h-3.5" />
+                              Negotiate
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1981,13 +2327,13 @@ export default function SalesDashboard() {
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[65vh]">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
                     {['Negotiation No', 'Quotation No', 'Customer', 'Sales Rep', 'Meeting Date', 'Status', 'Actions'].map(h => (
-                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
-                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-slate-800
+                        ${h === 'Actions' ? 'right-0 z-30' : 'z-20'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -2006,8 +2352,8 @@ export default function SalesDashboard() {
                     <tr key={neg.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{neg.negotiationNo}</td>
                       <td className="px-4 py-3.5 text-slate-300">{neg.quotationNo}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{neg.customer}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{neg.salesRepName || '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={neg.customer}>{neg.customer}</span></td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={neg.salesRepName ?? ''}>{neg.salesRepName || '—'}</span></td>
                       <td className="px-4 py-3.5 text-slate-400 text-xs">
                         {new Date(neg.meetingDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </td>
@@ -2016,22 +2362,31 @@ export default function SalesDashboard() {
                           {neg.status}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800 transition-colors">
                         <div className="flex items-center gap-1">
-                          <button onClick={() => setViewNegotiation(neg)}
-                            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all"
-                            title={neg.status === 'NEGOTIATING' && canManage(neg.salesRepId) ? 'Edit' : 'View'}>
-                            {neg.status === 'NEGOTIATING' && canManage(neg.salesRepId) ? <Edit2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          </button>
-                          <button
-                            onClick={() => setCompleteNegotiationTarget(neg)}
-                            disabled={neg.status !== 'NEGOTIATING' || !canManage(neg.salesRepId)}
-                            className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                            title="Complete Negotiation"
-                          >
-                            <Trophy className="w-3.5 h-3.5" />
-                            Complete
-                          </button>
+                          {(neg.status !== 'NEGOTIATING' || !canManage(neg.salesRepId)) && (
+                            <button onClick={() => setViewNegotiation(neg)}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {neg.status === 'NEGOTIATING' && canManage(neg.salesRepId) && (
+                            <button onClick={() => setViewNegotiation(neg)}
+                              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="Edit">
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {canManage(neg.salesRepId) && (
+                            <button
+                              onClick={() => setCompleteNegotiationTarget(neg)}
+                              disabled={neg.status !== 'NEGOTIATING'}
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-brand-500/10 text-brand-400 hover:bg-brand-500/20 border border-brand-500/30 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={neg.status !== 'NEGOTIATING' ? 'Only a Negotiating deal can be completed' : 'Complete Negotiation'}
+                            >
+                              <Trophy className="w-3.5 h-3.5" />
+                              Complete
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2077,13 +2432,13 @@ export default function SalesDashboard() {
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[65vh]">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-800 bg-slate-800/50">
                     {['Negotiation No', 'Opportunity', 'Customer', 'Sales Rep', 'Deal Amount', 'Result', 'Decision Date', 'Actions'].map(h => (
-                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap
-                        ${h === 'Actions' ? 'sticky right-0 z-10 bg-slate-800/50' : ''}`}>{h}</th>
+                      <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-slate-800
+                        ${h === 'Actions' ? 'right-0 z-30' : 'z-20'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -2101,9 +2456,9 @@ export default function SalesDashboard() {
                   ) : dealResults.map(dr => (
                     <tr key={dr.id} className="hover:bg-slate-800/40 transition-colors group">
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400">{dr.negotiationNo}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{dr.opportunityName}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{dr.customer}</td>
-                      <td className="px-4 py-3.5 text-slate-300">{dr.salesRepName || '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={dr.opportunityName ?? ''}>{dr.opportunityName}</span></td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={dr.customer}>{dr.customer}</span></td>
+                      <td className="px-4 py-3.5 text-slate-300"><span className="cell-truncate" title={dr.salesRepName ?? ''}>{dr.salesRepName || '—'}</span></td>
                       <td className="px-4 py-3.5 text-slate-300 tabular-nums">{dr.dealAmount.toLocaleString('en-US')}</td>
                       <td className="px-4 py-3.5">
                         <span className={`text-xs font-medium px-2 py-1 rounded-lg border ${dealResultColor[dr.result] ?? ''}`}>
@@ -2113,7 +2468,7 @@ export default function SalesDashboard() {
                       <td className="px-4 py-3.5 text-slate-400 text-xs">
                         {new Date(dr.decisionDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
                       </td>
-                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800/40 transition-colors">
+                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800 transition-colors">
                         <button onClick={() => setViewDealResult(dr)}
                           className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">
                           <Eye className="w-3.5 h-3.5" />

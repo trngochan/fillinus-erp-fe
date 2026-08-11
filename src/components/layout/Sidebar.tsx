@@ -17,7 +17,7 @@ const MODULE_ICONS: Record<string, React.ComponentType<{ className?: string }>> 
   sys: Settings2,
 }
 
-export default function Sidebar() {
+export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigate?: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -40,10 +40,13 @@ export default function Sidebar() {
   const goTo = (screen: { path?: string; tab?: string }) => {
     if (!screen.path) return
     navigate(screen.tab ? `${screen.path}?tab=${screen.tab}` : screen.path)
+    onNavigate?.()
   }
 
   return (
-    <aside className="w-64 shrink-0 bg-slate-900 border-r border-slate-800 h-full overflow-y-auto">
+    <aside className={`fixed left-0 top-16 bottom-0 z-50 w-64 bg-slate-900 border-r border-slate-800
+      overflow-y-auto overflow-x-hidden shadow-2xl transition-transform duration-200 ease-out
+      ${open ? 'translate-x-0' : '-translate-x-full'}`}>
       <nav className="py-3">
         {APP_MENU.map(mod => {
           const Icon = MODULE_ICONS[mod.id]

@@ -9,18 +9,23 @@ export interface RegisterRequest {
   email: string
 }
 
-export type LeadSource = 'New Client' | 'Existing Client' | 'Referral' | 'Digital Lead'
+export type LeadSource = 'Inbound' | 'Outbound'
+export type LeadAccountType = 'New' | 'Existing'
 
 export interface Lead {
   id: number
   leadId: string
   leadName: string
-  companyName: string
-  contactPerson: string
-  phone: string
-  email: string
-  status: 'NEW' | 'IN_PROGRESS' | 'QUALIFIED' | 'REJECTED'
+  companyName: string | null
+  /** Contact — Phone/Email/Social Link, each individually optional; at least one is filled. */
+  phone: string | null
+  email: string | null
+  socialLink: string | null
+  status: 'NEW' | 'IN_PROGRESS' | 'CLOSED'
   source: LeadSource | null
+  accountType: LeadAccountType
+  isDigital: boolean
+  isReferral: boolean
   salesRepId: number | null
   salesRepName: string | null
   remark: string | null
@@ -70,14 +75,16 @@ export interface Opportunity {
 export interface CreateLeadRequest {
   leadName: string
   companyName?: string
-  contactPerson?: string
+  /** Contact — each individually optional, but at least one of the three must be filled. */
   phone?: string
   email?: string
-  source?: LeadSource | ''
+  socialLink?: string
+  source: LeadSource | ''
+  accountType: LeadAccountType | ''
+  isDigital: boolean
+  isReferral: boolean
   salesRepId?: number
   remark?: string
-  /** Edit-only: New / In Progress / Rejected (Qualified is system-only, set by Convert) */
-  status?: 'NEW' | 'IN_PROGRESS' | 'REJECTED'
 }
 
 export interface OpportunityDetailRequest {
