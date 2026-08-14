@@ -1958,7 +1958,7 @@ export default function SalesDashboard() {
                     </th>
                     {['Lead ID', 'Lead Name', 'Company', 'Phone', 'Email', 'Social Link', 'Account Type', 'BD Representative', 'Status', 'Created', 'Updated', 'Created By', 'Updated By', 'Actions'].map(h => (
                       <th key={h} className={`px-4 py-3.5 text-left text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap sticky top-0 bg-slate-800
-                        ${h === 'Actions' ? 'right-0 z-30' : 'z-20'}`}>{h}</th>
+                        ${h === 'Actions' ? 'right-0 z-30 w-[210px] min-w-[210px]' : 'z-20'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -2024,7 +2024,7 @@ export default function SalesDashboard() {
                       <td className={`px-4 py-3.5 text-xs whitespace-nowrap ${rowColor ?? 'text-slate-400'}`}>{formatShortDate(lead.updatedAt)}</td>
                       <td className={`px-4 py-3.5 text-xs ${rowColor ?? 'text-slate-400'}`}><span className="cell-truncate" title={lead.createdByName ?? ''}>{lead.createdByName || '—'}</span></td>
                       <td className={`px-4 py-3.5 text-xs ${rowColor ?? 'text-slate-400'}`}><span className="cell-truncate" title={lead.updatedByName ?? ''}>{lead.updatedByName || '—'}</span></td>
-                      <td className="px-4 py-3.5 sticky right-0 z-10 bg-slate-900 group-hover:bg-slate-800 transition-colors" onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
+                      <td className="px-4 py-3.5 sticky right-0 z-10 w-[210px] min-w-[210px] bg-slate-900 group-hover:bg-slate-800 transition-colors" onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           <button onClick={() => { setEditLead(lead); setLeadForceView(true); setModalOpen(true) }}
                             className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-all" title="View">

@@ -27,7 +27,7 @@ export default function ConfirmDialog({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl animate-slide-up">
+      <div role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" className="bg-slate-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl animate-slide-up">
         <div className="p-6">
           <div className="flex items-start gap-3">
             <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center
@@ -35,7 +35,7 @@ export default function ConfirmDialog({
               {tone === 'danger' ? <AlertTriangle className="w-5 h-5" /> : <HelpCircle className="w-5 h-5" />}
             </div>
             <div className="flex-1 pt-0.5">
-              <h3 className="text-base font-semibold text-white">{title}</h3>
+              <h3 id="confirm-dialog-title" className="text-base font-semibold text-white">{title}</h3>
               <p className="text-sm text-slate-400 mt-1.5">{message}</p>
             </div>
           </div>

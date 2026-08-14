@@ -4,6 +4,12 @@ dist/
 .env.local
 *.log
 
+# Playwright generated output
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # Personal agent rules/skills — local use only, not shared via git
 AGENTS.md
 .claude/
