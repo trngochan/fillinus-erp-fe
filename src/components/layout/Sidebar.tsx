@@ -17,7 +17,7 @@ const MODULE_ICONS: Record<string, React.ComponentType<{ className?: string }>> 
   sys: Settings2,
 }
 
-export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigate?: () => void }) {
+export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -44,9 +44,8 @@ export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigat
   }
 
   return (
-    <aside className={`fixed left-0 top-16 bottom-0 z-50 w-64 bg-slate-900 border-r border-slate-800
-      overflow-y-auto overflow-x-hidden shadow-2xl transition-transform duration-200 ease-out
-      ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+    <aside className="group fixed left-0 top-16 bottom-0 z-40 w-16 hover:w-64 bg-slate-900 border-r border-slate-800
+      overflow-y-auto overflow-x-hidden shadow-2xl transition-[width] duration-200 ease-out">
       <nav className="py-3">
         {APP_MENU.map(mod => {
           const Icon = MODULE_ICONS[mod.id]
@@ -56,18 +55,21 @@ export default function Sidebar({ open, onNavigate }: { open: boolean; onNavigat
             <div key={mod.id} className="px-2">
               <button
                 onClick={() => toggle(mod.id)}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+                title={mod.name}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors justify-center group-hover:justify-start"
               >
                 <Icon className="w-4 h-4 shrink-0 text-slate-400" />
-                <span className="flex-1 text-left truncate">{mod.name}</span>
+                <span className="hidden group-hover:flex flex-1 text-left truncate">{mod.name}</span>
                 {builtCount === 0 && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-500 border border-slate-700">Soon</span>
+                  <span className="hidden group-hover:inline shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-500 border border-slate-700">Soon</span>
                 )}
-                {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+                <span className="hidden group-hover:inline shrink-0">
+                  {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
+                </span>
               </button>
 
               {isOpen && (
-                <div className="mt-0.5 mb-1.5 space-y-0.5">
+                <div className="hidden group-hover:block mt-0.5 mb-1.5 space-y-0.5">
                   {mod.screens.map(screen => {
                     const active = isActive(screen)
                     if (!screen.built) {
